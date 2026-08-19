@@ -1,0 +1,18 @@
+[Unit]
+Description=Cliente de camera Porto de Santos
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/Desktop/Porto_de_Santos_2025/PRINCIPAL
+ExecStart=/usr/bin/python3 /home/pi/Desktop/Porto_de_Santos_2025/PRINCIPAL/2026_02_05_Cliente_H01.py
+Restart=always
+RestartSec=10
+# stdout/stderr vao para o journal: journalctl -u camera-client -f
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
