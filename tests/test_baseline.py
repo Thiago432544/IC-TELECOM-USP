@@ -11,7 +11,7 @@ def test_median_of_matching_hour_only(tmp_path):
         for i, v in enumerate([50.0, 55.0, 60.0]):  # 3 amostras na hora 14
             s.add_sample(_at(day, 14) + i * 60, "102", "frames_min", v)
         s.add_sample(_at(day, 3), "102", "frames_min", 5.0)  # madrugada != hora 14
-    now = _at(17, 15)
+    now = _at(16, 23)   # janela de 7 dias cobre todas as amostras dos dias 10-16
     assert hourly_baseline(s, "102", 14, now) == 55.0
     s.close()
 
