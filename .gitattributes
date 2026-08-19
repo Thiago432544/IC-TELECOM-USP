@@ -1,0 +1,3 @@
+# O servidor roda no PC Windows: preservar CRLF para o diff contra o
+# arquivo em producao mostrar so as mudancas reais.
+deploy/pc/Servidor_receb_Imagens_Rasp.py -text
