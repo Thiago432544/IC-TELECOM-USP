@@ -1,0 +1,43 @@
+# Copie para config.toml e preencha os segredos. config.toml NÃO vai para o git.
+summary_hour = 8
+
+[paths]
+images = 'D:\SPA_Data\Imagens_Porto'
+log = 'D:\SPA_Data\LOG_connections.txt'
+data = 'C:\monitor\data'            # SQLite, outbox, logs do próprio monitor
+
+[cameras.102]
+save_every = 10                     # servidor grava 1 a cada 10 frames
+[cameras.105]
+save_every = 1
+[cameras.106]
+save_every = 10
+
+[telegram]
+enabled = false                     # true depois de criar o bot no @BotFather
+token = "COLOQUE_O_TOKEN_AQUI"
+chat_id = "COLOQUE_O_CHAT_ID_AQUI"
+
+[cpe]
+enabled = false                     # true depois de calibrar com: python -m monitor.cpe --probe
+url = "http://192.168.10.101/"
+username = ""
+password = ""
+rsrp_re = '(-?\d+)\s*dBm\s*\(RSRP\)'
+rsrq_re = '(-?\d+)\s*dB\s*\(RSRQ\)'
+interval_s = 60
+
+[alerts]
+disk_min_gb = 60.0
+down_after_s = 180
+degraded_ratio = 0.5
+degraded_after_s = 600
+flap_count = 5
+flap_window_s = 900
+realert_s = 1800
+link_rsrp_min = -110.0
+link_rsrq_min = -15.0
+link_after_s = 300
+
+[panel]
+port = 8080
