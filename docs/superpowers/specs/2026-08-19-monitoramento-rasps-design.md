@@ -111,7 +111,7 @@ Princípios:
 | 1.1 | Timeout do servidor 1 s → 30 s | `rasp_101.py` no PC | `INTERVAL = 30` para todos os clientes (o valor 15 da 105 também sobe). Elimina F1/F2. O timeout continua existindo para liberar conexões realmente mortas |
 | 1.2 | Autostart via systemd | Rasps 102, 105, 106 | Unit `camera-client.service`: `Restart=always`, `RestartSec=10`, `After=network-online.target`, log para journal. A 105 passa a rodar a **mesma versão** do cliente das outras (H01), eliminando F6 — validar com o time antes, pois a variante "sem_grav_local" pode ser intencional |
 | 1.3 | Blindar `restart_router()` | `watchdog_test.py` nas Rasps | `driver = None` antes do try; `if driver: driver.quit()` no except/finally. O NameError de F7 deixa de existir. (Substituir Selenium por HTTP fica para depois — mudança mínima agora) |
-| 1.4 | NTP na rede interna | PC + CPE SPA + Rasps | chrony no PC servindo NTP; encaminhar UDP 123 no CPE do SPA → PC; `chrony`/`timesyncd` nas Rasps apontando para `192.168.10.101`. Corrige F3 por software. Bateria/módulo RTC da 102 e 106: item de campo na próxima descida |
+| 1.4 | NTP na rede interna | PC + CPE SPA + Rasps | serviço nativo `w32time` do Windows configurado como servidor NTP no PC; encaminhar UDP 123 no CPE do SPA → PC; `systemd-timesyncd` nas Rasps apontando para `192.168.10.101`. Corrige F3 por software. Bateria/módulo RTC da 102 e 106: item de campo na próxima descida |
 | 1.5 | Fonte da 106 | campo | Trocar fonte/cabo (F4). Item de campo; o software apenas monitora `get_throttled` para confirmar que sumiu |
 
 Critério de aceite da fase: 24 h sem nenhum arquivo novo em `logs_failure/` da

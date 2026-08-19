@@ -1,0 +1,102 @@
+-----------------------------
+2025-03-25 08:00:05
+Resultados do ping para 192.168.11.254:
+PING 192.168.11.254 (192.168.11.254) 56(84) bytes of data.
+64 bytes from 192.168.11.254: icmp_seq=1 ttl=64 time=0.660 ms
+64 bytes from 192.168.11.254: icmp_seq=2 ttl=64 time=0.403 ms
+64 bytes from 192.168.11.254: icmp_seq=3 ttl=64 time=0.425 ms
+64 bytes from 192.168.11.254: icmp_seq=4 ttl=64 time=0.440 ms
+
+
+Resultados do ping para 192.168.10.1:
+PING 192.168.10.1 (192.168.10.1) 56(84) bytes of data.
+64 bytes from 192.168.10.1: icmp_seq=1 ttl=63 time=38.8 ms
+64 bytes from 192.168.10.1: icmp_seq=2 ttl=63 time=44.7 ms
+64 bytes from 192.168.10.1: icmp_seq=3 ttl=63 time=35.9 ms
+64 bytes from 192.168.10.1: icmp_seq=4 ttl=63 time=44.1 ms
+
+
+Resultados do ping para 192.168.10.106:
+PING 192.168.10.106 (192.168.10.106) 56(84) bytes of data.
+64 bytes from 192.168.10.106: icmp_seq=1 ttl=64 time=0.401 ms
+64 bytes from 192.168.10.106: icmp_seq=2 ttl=64 time=0.410 ms
+64 bytes from 192.168.10.106: icmp_seq=3 ttl=64 time=0.405 ms
+64 bytes from 192.168.10.106: icmp_seq=4 ttl=64 time=0.440 ms
+
+
+Uptime:
+ 08:00:18 up 16:47,  1 user,  load average: 0.46, 0.36, 0.31
+
+Usos:
+CPU: 6.8%
+Mem ria: 8.2%
+Disco: 39.2%
+
+temp=47.2'C
+
+-----------------------------
+2025-03-25 08:01:59
+Resultados do ping para 192.168.11.254:
+PING 192.168.11.254 (192.168.11.254) 56(84) bytes of data.
+64 bytes from 192.168.11.254: icmp_seq=1 ttl=64 time=0.446 ms
+64 bytes from 192.168.11.254: icmp_seq=2 ttl=64 time=0.425 ms
+64 bytes from 192.168.11.254: icmp_seq=3 ttl=64 time=0.435 ms
+64 bytes from 192.168.11.254: icmp_seq=4 ttl=64 time=0.418 ms
+
+
+Resultados do ping para 192.168.10.1:
+PING 192.168.10.1 (192.168.10.1) 56(84) bytes of data.
+64 bytes from 192.168.10.1: icmp_seq=1 ttl=63 time=38.3 ms
+64 bytes from 192.168.10.1: icmp_seq=2 ttl=63 time=36.6 ms
+64 bytes from 192.168.10.1: icmp_seq=3 ttl=63 time=34.9 ms
+64 bytes from 192.168.10.1: icmp_seq=4 ttl=63 time=32.4 ms
+
+
+Resultados do ping para 192.168.10.106:
+PING 192.168.10.106 (192.168.10.106) 56(84) bytes of data.
+64 bytes from 192.168.10.106: icmp_seq=1 ttl=64 time=0.335 ms
+64 bytes from 192.168.10.106: icmp_seq=2 ttl=64 time=0.407 ms
+64 bytes from 192.168.10.106: icmp_seq=3 ttl=64 time=0.408 ms
+64 bytes from 192.168.10.106: icmp_seq=4 ttl=64 time=0.420 ms
+
+
+Uptime:
+ 08:02:11 up 16:49,  1 user,  load average: 0.56, 0.41, 0.33
+
+Usos:
+CPU: 7.7%
+Mem ria: 8.2%
+Disco: 39.2%
+
+temp=47.2'C
+
+-----------------------------
+2025-03-25 08:03:52
+Resultados do ping para 192.168.11.254:
+PING 192.168.11.254 (192.168.11.254) 56(84) bytes of data.
+64 bytes from 192.168.11.254: icmp_seq=1 ttl=64 time=0.408 ms
+64 bytes from 192.168.11.254: icmp_seq=2 ttl=64 time=0.335 ms
+64 bytes from 192.168.11.254: icmp_seq=3 ttl=64 time=0.382 ms
+64 bytes from 192.168.11.254: icmp_seq=4 ttl=64 time=0.860 ms
+
+
+Resultados do ping para 192.168.10.1:
+PING 192.168.10.1 (192.168.10.1) 56(84) bytes of data.
+64 bytes from 192.168.10.1: icmp_seq=1 ttl=63 time=32.7 ms
+64 bytes from 192.168.10.1: icmp_seq=2 ttl=63 time=30.8 ms
+64 bytes from 192.168.10.1: icmp_seq=3 ttl=63 time=28.9 ms
+64 bytes from 192.168.10.1: icmp_seq=4 ttl=63 time=26.4 ms
+
+
+Resultados do ping para 192.168.10.106:
+PING 192.168.10.106 (192.168.10.106) 56(84) bytes of data.
+64 bytes from 192.168.10.106: icmp_seq=1 ttl=64 time=0.339 ms
+64 bytes from 192.168.10.106: icmp_seq=2 ttl=64 time=0.372 ms
+64 bytes from 192.168.10.106: icmp_seq=3 ttl=64 time=0.415 ms
+64 bytes from 192.168.10.106: icmp_seq=4 ttl=64 time=0.416 ms
+
+
+Uptime:
+ 08:04:04 up 16:51,  1 user,  load average: 0.32, 0.35, 0.32
+
+Usos:

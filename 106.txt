@@ -1,0 +1,800 @@
+===== IDENTIDADE =====
+raspberrypi
+Raspberry Pi 4 Model B Rev 1.5 
+PRETTY_NAME="Debian GNU/Linux 12 (bookworm)"
+NAME="Debian GNU/Linux"
+Linux raspberrypi 6.6.51+rpt-rpi-v8 #1 SMP PREEMPT Debian 1:6.6.51-1+rpt3 (2024-10-08) aarch64 GNU/Linux
+Python 3.11.2
+===== RELOGIO =====
+Sun Jul 26 11:58:54 PM -03 2026
+               Local time: Sun 2026-07-26 23:58:58 -03
+           Universal time: Mon 2026-07-27 02:58:58 UTC
+                 RTC time: n/a
+                Time zone: America/Sao_Paulo (-03, -0300)
+System clock synchronized: no
+              NTP service: inactive
+          RTC in local TZ: no
+===== UPTIME/CARGA =====
+ 23:58:58 up 21:37,  2 users,  load average: 0.78, 0.51, 0.43
+               total        used        free      shared  buff/cache   available
+Mem:           7.6Gi       779Mi       5.2Gi        70Mi       1.9Gi       6.9Gi
+Swap:          199Mi          0B       199Mi
+Filesystem      Size  Used Avail Use% Mounted on
+udev            3.6G     0  3.6G   0% /dev
+tmpfs           781M  1.4M  780M   1% /run
+/dev/mmcblk0p2   29G   13G   15G  46% /
+tmpfs           3.9G  8.0K  3.9G   1% /dev/shm
+tmpfs           5.0M   16K  5.0M   1% /run/lock
+/dev/mmcblk0p1  510M   76M  435M  15% /boot/firmware
+tmpfs           781M   60K  781M   1% /run/user/1000
+NAME      TYPE SIZE USED PRIO
+/var/swap file 200M   0B   -2
+===== ENERGIA/TEMP =====
+throttled=0x50000
+temp=58.4'C
+volt=0.9360V
+===== PSI DISPONIVEL? =====
+ls: cannot access '/proc/pressure/': No such file or directory
+cat: '/proc/pressure/*': No such file or directory
+===== ERROS DE KERNEL (I/O, OOM, undervolt) =====
+[    1.611229] mmc-bcm2835 fe300000.mmcnr: mmc_debug:0 mmc_debug2:0
+[    1.611257] mmc-bcm2835 fe300000.mmcnr: DMA channel allocated
+[    1.674534] mmc0: SDHCI controller on fe340000.mmc [fe340000.mmc] using ADMA
+[    1.716845] mmc1: new high speed SDIO card at address 0001
+[    1.771656] mmc0: new ultra high speed DDR50 SDHC card at address 0001
+[    1.772659] mmcblk0: mmc0:0001 EB1QT 29.8 GiB
+[    1.775376]  mmcblk0: p1 p2
+[    1.775882] mmcblk0: mmc0:0001 EB1QT 29.8 GiB
+[    2.797605] EXT4-fs (mmcblk0p2): mounted filesystem 12974fe2-889e-4060-b497-1d6ac3fbbb4b ro with ordered data mode. Quota mode: none.
+[    4.643772] EXT4-fs (mmcblk0p2): re-mounted 12974fe2-889e-4060-b497-1d6ac3fbbb4b r/w. Quota mode: none.
+[   12.629768] rtc-ds1307: probe of 1-0068 failed with error -5
+[ 2559.287760] v3d fec00000.v3d: MMU error from client CLE (4) at 0x7d81000, pte invalid
+[19571.935045] hwmon hwmon1: Undervoltage detected!
+[19582.015040] hwmon hwmon1: Undervoltage detected!
+[19640.479031] hwmon hwmon1: Undervoltage detected!
+[19648.543399] hwmon hwmon1: Undervoltage detected!
+===== O QUE INICIA NO BOOT =====
+no crontab for pi
+ls: cannot access '/home/pi/.config/autostart/': No such file or directory
+cat: '/home/pi/.config/autostart/*.desktop': No such file or directory
+
+_IP=$(hostname -I) || true
+if [ "$_IP" ]; then
+  printf "My IP address is %s\n" "$_IP"
+fi
+
+echo ds1307 0x68 > /sys/class/i2c-adapter/i2c-1/new_device
+hwclock -s
+
+sudo python /etc/nlt/cpe_tst.py
+
+exit 0
+  UNIT                           LOAD   ACTIVE SUB     DESCRIPTION
+  accounts-daemon.service        loaded active running Accounts Service
+  colord.service                 loaded active running Manage, Install and Generate Color Profiles
+  cups-browsed.service           loaded active running Make remote CUPS printers available locally
+  cups.service                   loaded active running CUPS Scheduler
+  getty@tty1.service             loaded active running Getty on tty1
+  lightdm.service                loaded active running Light Display Manager
+  ModemManager.service           loaded active running Modem Manager
+  polkit.service                 loaded active running Authorization Manager
+  rtkit-daemon.service           loaded active running RealtimeKit Scheduling Policy Service
+  udisks2.service                loaded active running Disk Manager
+  upower.service                 loaded active running Daemon for power management
+  user@1000.service              loaded active running User Manager for UID 1000
+  vncserver-x11-serviced.service loaded active running VNC Server in Service Mode daemon
+  wpa_supplicant.service         loaded active running WPA supplicant
+
+LOAD   = Reflects whether the unit definition was properly loaded.
+ACTIVE = The high-level unit activation state, i.e. generalization of SUB.
+SUB    = The low-level unit activation state, values depend on unit type.
+25 loaded units listed.
+===== PROCESSOS DO PROJETO =====
+root          53  0.0  0.0      0     0 ?        S    02:21   0:00 [watchdogd]
+pi        975558 16.0  1.7 1094196 139344 pts/2  SLl+ 08:52 145:17 /usr/bin/python3 /home/pi/Desktop/Porto_de_Santos_2025/PRINCIPAL/2026_02_05_Cliente_H01.py
+pi       4090074  0.5  0.6 476916 50436 ?        Sl   23:53   0:01 geany /home/pi/Desktop/Porto_de_Santos_2025/PRINCIPAL/watchdog_test.py
+===== REDE =====
+lo               UNKNOWN        127.0.0.1/8 ::1/128 
+eth0             UP             192.168.11.106/24 fe80::cd39:efc9:6:ba59/64 
+wlan0            DOWN           
+default via 192.168.11.254 dev eth0 proto dhcp src 192.168.11.106 metric 100 
+192.168.11.0/24 dev eth0 proto kernel scope link src 192.168.11.106 metric 100 
+wlan0     IEEE 802.11  ESSID:off/any  
+          Mode:Managed  Access Point: Not-Associated   
+          Retry short limit:7   RTS thr:off   Fragment thr:off
+          Power Management:on
+          
+===== ALCANCA ENODEB E CPE? =====
+--- 192.168.10.100
+2 packets transmitted, 0 received, 100% packet loss, time 1026ms
+
+HTTP 000
+--- 192.168.10.101
+2 packets transmitted, 0 received, 100% packet loss, time 1010ms
+
+HTTP 000
+--- 192.168.10.102
+2 packets transmitted, 0 received, 100% packet loss, time 1029ms
+
+HTTP 000
+--- 192.168.10.103
+2 packets transmitted, 2 received, 0% packet loss, time 1001ms
+rtt min/avg/max/mdev = 45.712/76.996/108.280/31.284 ms
+HTTP 000
+===== LOGS DE FALHA =====
+total 5056
+drwxr-xr-x 2 pi pi 2822144 Jul 26 23:58 .
+drwxr-xr-x 6 pi pi    4096 Jul 26 05:36 ..
+-rw-r--r-- 1 pi pi     481 Jul 26 08:24 falha_2026-07-26_08-24-24.txt
+-rw-r--r-- 1 pi pi     477 Jul 26 08:26 falha_2026-07-26_08-26-59.txt
+-rw-r--r-- 1 pi pi     477 Jul 26 08:28 falha_2026-07-26_08-28-28.txt
+-rw-r--r-- 1 pi pi     479 Jul 26 08:39 falha_2026-07-26_08-39-10.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 09:04 falha_2026-07-26_09-04-49.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 09:05 falha_2026-07-26_09-05-02.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 09:11 falha_2026-07-26_09-11-32.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 09:21 falha_2026-07-26_09-21-02.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 09:32 falha_2026-07-26_09-32-41.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 09:35 falha_2026-07-26_09-35-57.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 10:03 falha_2026-07-26_10-03-10.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 10:03 falha_2026-07-26_10-03-26.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 10:03 falha_2026-07-26_10-03-41.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 10:04 falha_2026-07-26_10-04-20.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 10:23 falha_2026-07-26_10-23-28.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 10:28 falha_2026-07-26_10-28-01.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 10:28 falha_2026-07-26_10-28-56.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 10:35 falha_2026-07-26_10-35-09.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 10:35 falha_2026-07-26_10-35-36.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 10:37 falha_2026-07-26_10-37-23.txt
+-rw-r--r-- 1 pi pi     454 Jul 26 10:37 falha_2026-07-26_10-37-42.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 10:38 falha_2026-07-26_10-38-17.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 10:38 falha_2026-07-26_10-38-31.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 10:39 falha_2026-07-26_10-39-00.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 10:39 falha_2026-07-26_10-39-19.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 10:40 falha_2026-07-26_10-40-34.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 10:50 falha_2026-07-26_10-50-18.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 10:53 falha_2026-07-26_10-53-36.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 10:56 falha_2026-07-26_10-56-37.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 10:58 falha_2026-07-26_10-58-05.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 11:07 falha_2026-07-26_11-07-13.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 11:09 falha_2026-07-26_11-09-16.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 11:09 falha_2026-07-26_11-09-30.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 11:09 falha_2026-07-26_11-09-58.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 11:18 falha_2026-07-26_11-18-08.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 11:22 falha_2026-07-26_11-22-17.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 11:47 falha_2026-07-26_11-47-30.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 11:48 falha_2026-07-26_11-48-35.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 11:48 falha_2026-07-26_11-48-50.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 11:49 falha_2026-07-26_11-49-45.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 13:01 falha_2026-07-26_13-01-43.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 13:53 falha_2026-07-26_13-53-50.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 13:56 falha_2026-07-26_13-56-01.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 13:57 falha_2026-07-26_13-57-45.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 13:58 falha_2026-07-26_13-58-59.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 13:59 falha_2026-07-26_13-59-24.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 14:00 falha_2026-07-26_14-00-55.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 14:01 falha_2026-07-26_14-01-47.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 14:02 falha_2026-07-26_14-02-33.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 14:06 falha_2026-07-26_14-06-01.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 14:06 falha_2026-07-26_14-06-34.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 14:07 falha_2026-07-26_14-07-08.txt
+-rw-r--r-- 1 pi pi     454 Jul 26 14:08 falha_2026-07-26_14-08-31.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 14:09 falha_2026-07-26_14-09-09.txt
+-rw-r--r-- 1 pi pi     454 Jul 26 14:10 falha_2026-07-26_14-10-34.txt
+-rw-r--r-- 1 pi pi     454 Jul 26 14:10 falha_2026-07-26_14-10-50.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 14:11 falha_2026-07-26_14-11-56.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 14:12 falha_2026-07-26_14-12-24.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 14:13 falha_2026-07-26_14-13-01.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 14:13 falha_2026-07-26_14-13-46.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 14:13 falha_2026-07-26_14-13-59.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 14:16 falha_2026-07-26_14-16-33.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 14:17 falha_2026-07-26_14-17-56.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 14:19 falha_2026-07-26_14-19-54.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 14:20 falha_2026-07-26_14-20-34.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 14:21 falha_2026-07-26_14-21-05.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 14:22 falha_2026-07-26_14-22-04.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 14:22 falha_2026-07-26_14-22-36.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 14:23 falha_2026-07-26_14-23-05.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 14:26 falha_2026-07-26_14-26-58.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 14:28 falha_2026-07-26_14-28-04.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 14:28 falha_2026-07-26_14-28-41.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 14:29 falha_2026-07-26_14-29-14.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 14:29 falha_2026-07-26_14-29-35.txt
+-rw-r--r-- 1 pi pi     454 Jul 26 14:30 falha_2026-07-26_14-30-52.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 14:31 falha_2026-07-26_14-31-51.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 14:33 falha_2026-07-26_14-33-48.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 14:34 falha_2026-07-26_14-34-53.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 14:35 falha_2026-07-26_14-35-19.txt
+-rw-r--r-- 1 pi pi     454 Jul 26 14:35 falha_2026-07-26_14-35-50.txt
+-rw-r--r-- 1 pi pi     454 Jul 26 14:37 falha_2026-07-26_14-37-06.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 14:38 falha_2026-07-26_14-38-10.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 14:38 falha_2026-07-26_14-38-53.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 14:41 falha_2026-07-26_14-41-17.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 14:43 falha_2026-07-26_14-43-23.txt
+-rw-r--r-- 1 pi pi     454 Jul 26 14:43 falha_2026-07-26_14-43-47.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 14:44 falha_2026-07-26_14-44-51.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 14:46 falha_2026-07-26_14-46-32.txt
+-rw-r--r-- 1 pi pi     454 Jul 26 14:47 falha_2026-07-26_14-47-49.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 14:48 falha_2026-07-26_14-48-31.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 14:48 falha_2026-07-26_14-48-44.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 14:49 falha_2026-07-26_14-49-03.txt
+-rw-r--r-- 1 pi pi     454 Jul 26 14:49 falha_2026-07-26_14-49-29.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 14:50 falha_2026-07-26_14-50-05.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 14:52 falha_2026-07-26_14-52-01.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 14:52 falha_2026-07-26_14-52-28.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 14:53 falha_2026-07-26_14-53-08.txt
+-rw-r--r-- 1 pi pi     454 Jul 26 14:53 falha_2026-07-26_14-53-28.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 14:53 falha_2026-07-26_14-53-52.txt
+-rw-r--r-- 1 pi pi     454 Jul 26 14:55 falha_2026-07-26_14-55-31.txt
+-rw-r--r-- 1 pi pi     454 Jul 26 14:55 falha_2026-07-26_14-55-47.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 14:57 falha_2026-07-26_14-57-02.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 15:03 falha_2026-07-26_15-03-07.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 15:03 falha_2026-07-26_15-03-22.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 15:15 falha_2026-07-26_15-15-30.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 15:17 falha_2026-07-26_15-17-38.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 15:19 falha_2026-07-26_15-19-13.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 15:20 falha_2026-07-26_15-20-16.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 15:21 falha_2026-07-26_15-21-01.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 15:22 falha_2026-07-26_15-22-57.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 15:23 falha_2026-07-26_15-23-10.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 15:24 falha_2026-07-26_15-24-38.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 15:25 falha_2026-07-26_15-25-08.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 15:27 falha_2026-07-26_15-27-04.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 15:27 falha_2026-07-26_15-27-54.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 15:28 falha_2026-07-26_15-28-06.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 15:28 falha_2026-07-26_15-28-20.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 15:29 falha_2026-07-26_15-29-12.txt
+-rw-r--r-- 1 pi pi     454 Jul 26 15:31 falha_2026-07-26_15-31-36.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 15:31 falha_2026-07-26_15-31-55.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 15:32 falha_2026-07-26_15-32-15.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 15:32 falha_2026-07-26_15-32-27.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 15:33 falha_2026-07-26_15-33-06.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 15:34 falha_2026-07-26_15-34-16.txt
+-rw-r--r-- 1 pi pi     454 Jul 26 15:35 falha_2026-07-26_15-35-23.txt
+-rw-r--r-- 1 pi pi     454 Jul 26 15:35 falha_2026-07-26_15-35-39.txt
+-rw-r--r-- 1 pi pi     454 Jul 26 15:36 falha_2026-07-26_15-36-13.txt
+-rw-r--r-- 1 pi pi     454 Jul 26 15:36 falha_2026-07-26_15-36-41.txt
+-rw-r--r-- 1 pi pi     454 Jul 26 15:37 falha_2026-07-26_15-37-40.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 15:38 falha_2026-07-26_15-38-16.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 15:38 falha_2026-07-26_15-38-28.txt
+-rw-r--r-- 1 pi pi     454 Jul 26 15:39 falha_2026-07-26_15-39-05.txt
+-rw-r--r-- 1 pi pi     454 Jul 26 15:39 falha_2026-07-26_15-39-36.txt
+-rw-r--r-- 1 pi pi     454 Jul 26 15:39 falha_2026-07-26_15-39-55.txt
+-rw-r--r-- 1 pi pi     454 Jul 26 15:40 falha_2026-07-26_15-40-33.txt
+-rw-r--r-- 1 pi pi     454 Jul 26 15:41 falha_2026-07-26_15-41-00.txt
+-rw-r--r-- 1 pi pi     454 Jul 26 15:41 falha_2026-07-26_15-41-22.txt
+-rw-r--r-- 1 pi pi     454 Jul 26 15:42 falha_2026-07-26_15-42-12.txt
+-rw-r--r-- 1 pi pi     454 Jul 26 15:42 falha_2026-07-26_15-42-37.txt
+-rw-r--r-- 1 pi pi     454 Jul 26 15:42 falha_2026-07-26_15-42-54.txt
+-rw-r--r-- 1 pi pi     454 Jul 26 15:43 falha_2026-07-26_15-43-17.txt
+-rw-r--r-- 1 pi pi     454 Jul 26 15:43 falha_2026-07-26_15-43-42.txt
+-rw-r--r-- 1 pi pi     454 Jul 26 15:44 falha_2026-07-26_15-44-09.txt
+-rw-r--r-- 1 pi pi     454 Jul 26 15:44 falha_2026-07-26_15-44-25.txt
+-rw-r--r-- 1 pi pi     454 Jul 26 15:44 falha_2026-07-26_15-44-50.txt
+-rw-r--r-- 1 pi pi     454 Jul 26 15:45 falha_2026-07-26_15-45-14.txt
+-rw-r--r-- 1 pi pi     454 Jul 26 15:45 falha_2026-07-26_15-45-30.txt
+-rw-r--r-- 1 pi pi     454 Jul 26 15:45 falha_2026-07-26_15-45-55.txt
+-rw-r--r-- 1 pi pi     454 Jul 26 15:46 falha_2026-07-26_15-46-22.txt
+-rw-r--r-- 1 pi pi     454 Jul 26 15:46 falha_2026-07-26_15-46-38.txt
+-rw-r--r-- 1 pi pi     454 Jul 26 15:47 falha_2026-07-26_15-46-59.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 15:47 falha_2026-07-26_15-47-13.txt
+-rw-r--r-- 1 pi pi     454 Jul 26 15:47 falha_2026-07-26_15-47-37.txt
+-rw-r--r-- 1 pi pi     454 Jul 26 15:47 falha_2026-07-26_15-47-53.txt
+-rw-r--r-- 1 pi pi     454 Jul 26 15:48 falha_2026-07-26_15-48-17.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 15:48 falha_2026-07-26_15-48-32.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 15:48 falha_2026-07-26_15-48-45.txt
+-rw-r--r-- 1 pi pi     454 Jul 26 15:49 falha_2026-07-26_15-49-15.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 15:50 falha_2026-07-26_15-50-12.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 15:50 falha_2026-07-26_15-50-47.txt
+-rw-r--r-- 1 pi pi     454 Jul 26 15:51 falha_2026-07-26_15-51-14.txt
+-rw-r--r-- 1 pi pi     454 Jul 26 15:51 falha_2026-07-26_15-51-37.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 15:53 falha_2026-07-26_15-53-08.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 15:53 falha_2026-07-26_15-53-59.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 15:55 falha_2026-07-26_15-55-13.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 15:56 falha_2026-07-26_15-56-35.txt
+-rw-r--r-- 1 pi pi     454 Jul 26 15:56 falha_2026-07-26_15-56-56.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 15:57 falha_2026-07-26_15-57-29.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 16:00 falha_2026-07-26_16-00-13.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 16:02 falha_2026-07-26_16-02-06.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 16:07 falha_2026-07-26_16-07-18.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 16:07 falha_2026-07-26_16-07-52.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 16:08 falha_2026-07-26_16-08-55.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 16:10 falha_2026-07-26_16-10-06.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 16:10 falha_2026-07-26_16-10-20.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 16:11 falha_2026-07-26_16-11-13.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 16:11 falha_2026-07-26_16-11-38.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 16:12 falha_2026-07-26_16-12-04.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 16:13 falha_2026-07-26_16-13-46.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 16:14 falha_2026-07-26_16-14-06.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 16:15 falha_2026-07-26_16-15-06.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 16:15 falha_2026-07-26_16-15-30.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 16:15 falha_2026-07-26_16-15-57.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 16:17 falha_2026-07-26_16-17-33.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 16:18 falha_2026-07-26_16-18-09.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 16:19 falha_2026-07-26_16-19-21.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 16:21 falha_2026-07-26_16-21-53.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 16:22 falha_2026-07-26_16-22-22.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 16:22 falha_2026-07-26_16-22-41.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 16:24 falha_2026-07-26_16-24-06.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 16:24 falha_2026-07-26_16-24-38.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 16:25 falha_2026-07-26_16-25-13.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 16:26 falha_2026-07-26_16-26-03.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 16:26 falha_2026-07-26_16-26-54.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 16:27 falha_2026-07-26_16-27-14.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 16:27 falha_2026-07-26_16-27-51.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 16:31 falha_2026-07-26_16-31-30.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 16:33 falha_2026-07-26_16-33-42.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 16:34 falha_2026-07-26_16-34-01.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 16:35 falha_2026-07-26_16-35-21.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 16:36 falha_2026-07-26_16-36-25.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 16:39 falha_2026-07-26_16-39-56.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 16:45 falha_2026-07-26_16-45-13.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 16:46 falha_2026-07-26_16-46-13.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 16:51 falha_2026-07-26_16-51-54.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 16:53 falha_2026-07-26_16-53-21.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 16:54 falha_2026-07-26_16-54-21.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 16:59 falha_2026-07-26_16-59-11.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 17:02 falha_2026-07-26_17-02-18.txt
+-rw-r--r-- 1 pi pi     454 Jul 26 17:04 falha_2026-07-26_17-04-51.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 17:05 falha_2026-07-26_17-05-35.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 17:07 falha_2026-07-26_17-07-50.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 17:08 falha_2026-07-26_17-08-23.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 17:09 falha_2026-07-26_17-09-40.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 17:10 falha_2026-07-26_17-10-21.txt
+-rw-r--r-- 1 pi pi     454 Jul 26 17:12 falha_2026-07-26_17-12-34.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 17:14 falha_2026-07-26_17-14-25.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 17:15 falha_2026-07-26_17-15-04.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 17:15 falha_2026-07-26_17-15-51.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 17:16 falha_2026-07-26_17-16-35.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 17:17 falha_2026-07-26_17-17-28.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 17:18 falha_2026-07-26_17-18-37.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 17:19 falha_2026-07-26_17-19-26.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 17:19 falha_2026-07-26_17-19-52.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 17:20 falha_2026-07-26_17-20-07.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 17:20 falha_2026-07-26_17-20-30.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 17:21 falha_2026-07-26_17-21-20.txt
+-rw-r--r-- 1 pi pi     454 Jul 26 17:22 falha_2026-07-26_17-22-28.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 17:23 falha_2026-07-26_17-23-01.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 17:24 falha_2026-07-26_17-24-17.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 17:24 falha_2026-07-26_17-24-50.txt
+-rw-r--r-- 1 pi pi     454 Jul 26 17:26 falha_2026-07-26_17-26-01.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 17:27 falha_2026-07-26_17-27-10.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 17:27 falha_2026-07-26_17-27-36.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 17:28 falha_2026-07-26_17-28-11.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 17:28 falha_2026-07-26_17-28-47.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 17:29 falha_2026-07-26_17-29-17.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 17:30 falha_2026-07-26_17-30-45.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 17:31 falha_2026-07-26_17-31-15.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 17:32 falha_2026-07-26_17-32-39.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 17:34 falha_2026-07-26_17-34-57.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 17:35 falha_2026-07-26_17-35-40.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 17:37 falha_2026-07-26_17-37-39.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 17:38 falha_2026-07-26_17-38-35.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 17:39 falha_2026-07-26_17-39-17.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 17:40 falha_2026-07-26_17-40-09.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 17:41 falha_2026-07-26_17-41-49.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 17:42 falha_2026-07-26_17-42-10.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 17:42 falha_2026-07-26_17-42-47.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 17:43 falha_2026-07-26_17-43-10.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 17:44 falha_2026-07-26_17-44-36.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 17:46 falha_2026-07-26_17-46-52.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 17:49 falha_2026-07-26_17-49-20.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 17:50 falha_2026-07-26_17-50-03.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 17:50 falha_2026-07-26_17-50-42.txt
+-rw-r--r-- 1 pi pi     454 Jul 26 17:55 falha_2026-07-26_17-55-48.txt
+-rw-r--r-- 1 pi pi     454 Jul 26 17:56 falha_2026-07-26_17-56-08.txt
+-rw-r--r-- 1 pi pi     454 Jul 26 17:57 falha_2026-07-26_17-57-10.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 17:57 falha_2026-07-26_17-57-24.txt
+-rw-r--r-- 1 pi pi     454 Jul 26 17:59 falha_2026-07-26_17-59-08.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 17:59 falha_2026-07-26_17-59-50.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 18:00 falha_2026-07-26_18-00-05.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 18:01 falha_2026-07-26_18-01-03.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 18:01 falha_2026-07-26_18-01-35.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 18:03 falha_2026-07-26_18-03-50.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 18:04 falha_2026-07-26_18-04-39.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 18:04 falha_2026-07-26_18-04-59.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 18:05 falha_2026-07-26_18-05-49.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 18:06 falha_2026-07-26_18-06-13.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 18:07 falha_2026-07-26_18-07-57.txt
+-rw-r--r-- 1 pi pi     454 Jul 26 18:09 falha_2026-07-26_18-09-39.txt
+-rw-r--r-- 1 pi pi     454 Jul 26 18:09 falha_2026-07-26_18-09-56.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 18:10 falha_2026-07-26_18-10-43.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 18:11 falha_2026-07-26_18-11-27.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 18:11 falha_2026-07-26_18-11-52.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 18:12 falha_2026-07-26_18-12-10.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 18:14 falha_2026-07-26_18-14-57.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 18:21 falha_2026-07-26_18-21-31.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 18:26 falha_2026-07-26_18-26-14.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 18:28 falha_2026-07-26_18-28-10.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 18:35 falha_2026-07-26_18-35-16.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 18:36 falha_2026-07-26_18-36-01.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 18:36 falha_2026-07-26_18-36-55.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 18:37 falha_2026-07-26_18-37-55.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 18:39 falha_2026-07-26_18-39-41.txt
+-rw-r--r-- 1 pi pi     454 Jul 26 18:42 falha_2026-07-26_18-42-27.txt
+-rw-r--r-- 1 pi pi     454 Jul 26 18:43 falha_2026-07-26_18-43-42.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 18:44 falha_2026-07-26_18-44-14.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 18:44 falha_2026-07-26_18-44-42.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 18:46 falha_2026-07-26_18-46-15.txt
+-rw-r--r-- 1 pi pi     454 Jul 26 18:47 falha_2026-07-26_18-47-03.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 18:48 falha_2026-07-26_18-48-48.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 18:49 falha_2026-07-26_18-49-02.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 18:49 falha_2026-07-26_18-49-31.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 18:49 falha_2026-07-26_18-49-50.txt
+-rw-r--r-- 1 pi pi     454 Jul 26 18:52 falha_2026-07-26_18-52-16.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 18:53 falha_2026-07-26_18-53-04.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 18:53 falha_2026-07-26_18-53-27.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 18:53 falha_2026-07-26_18-53-55.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 18:54 falha_2026-07-26_18-54-22.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 18:54 falha_2026-07-26_18-54-35.txt
+-rw-r--r-- 1 pi pi     454 Jul 26 18:55 falha_2026-07-26_18-55-46.txt
+-rw-r--r-- 1 pi pi     454 Jul 26 18:56 falha_2026-07-26_18-56-02.txt
+-rw-r--r-- 1 pi pi     454 Jul 26 18:56 falha_2026-07-26_18-56-29.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 18:56 falha_2026-07-26_18-56-51.txt
+-rw-r--r-- 1 pi pi     454 Jul 26 18:57 falha_2026-07-26_18-57-16.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 18:57 falha_2026-07-26_18-57-32.txt
+-rw-r--r-- 1 pi pi     454 Jul 26 19:00 falha_2026-07-26_19-00-01.txt
+-rw-r--r-- 1 pi pi     454 Jul 26 19:00 falha_2026-07-26_19-00-17.txt
+-rw-r--r-- 1 pi pi     454 Jul 26 19:00 falha_2026-07-26_19-00-47.txt
+-rw-r--r-- 1 pi pi     454 Jul 26 19:01 falha_2026-07-26_19-01-03.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 19:01 falha_2026-07-26_19-01-21.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 19:01 falha_2026-07-26_19-01-40.txt
+-rw-r--r-- 1 pi pi     454 Jul 26 19:02 falha_2026-07-26_19-02-06.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 19:02 falha_2026-07-26_19-02-22.txt
+-rw-r--r-- 1 pi pi     454 Jul 26 19:02 falha_2026-07-26_19-02-48.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 19:03 falha_2026-07-26_19-03-02.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 19:03 falha_2026-07-26_19-03-16.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 19:03 falha_2026-07-26_19-03-37.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 19:05 falha_2026-07-26_19-05-42.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 19:05 falha_2026-07-26_19-05-56.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 19:06 falha_2026-07-26_19-06-22.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 19:06 falha_2026-07-26_19-06-48.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 19:08 falha_2026-07-26_19-08-49.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 19:09 falha_2026-07-26_19-09-01.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 19:10 falha_2026-07-26_19-10-13.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 19:10 falha_2026-07-26_19-10-28.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 19:13 falha_2026-07-26_19-13-12.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 19:17 falha_2026-07-26_19-17-56.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 19:19 falha_2026-07-26_19-19-43.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 19:21 falha_2026-07-26_19-21-13.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 19:23 falha_2026-07-26_19-23-14.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 19:24 falha_2026-07-26_19-24-26.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 19:25 falha_2026-07-26_19-25-51.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 19:27 falha_2026-07-26_19-27-00.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 19:28 falha_2026-07-26_19-28-40.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 19:29 falha_2026-07-26_19-29-31.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 19:30 falha_2026-07-26_19-30-35.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 19:38 falha_2026-07-26_19-38-23.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 19:39 falha_2026-07-26_19-39-37.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 19:42 falha_2026-07-26_19-42-27.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 19:43 falha_2026-07-26_19-43-02.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 19:43 falha_2026-07-26_19-43-34.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 19:44 falha_2026-07-26_19-44-01.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 19:44 falha_2026-07-26_19-44-17.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 19:44 falha_2026-07-26_19-44-35.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 19:45 falha_2026-07-26_19-45-06.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 19:47 falha_2026-07-26_19-47-23.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 19:49 falha_2026-07-26_19-49-39.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 19:50 falha_2026-07-26_19-50-48.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 19:51 falha_2026-07-26_19-51-29.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 19:57 falha_2026-07-26_19-57-52.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 20:00 falha_2026-07-26_20-00-51.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 20:05 falha_2026-07-26_20-05-33.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 20:05 falha_2026-07-26_20-05-50.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 20:07 falha_2026-07-26_20-07-06.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 20:07 falha_2026-07-26_20-07-38.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 20:11 falha_2026-07-26_20-11-17.txt
+-rw-r--r-- 1 pi pi     454 Jul 26 20:13 falha_2026-07-26_20-13-48.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 20:14 falha_2026-07-26_20-14-30.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 20:14 falha_2026-07-26_20-14-54.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 20:17 falha_2026-07-26_20-17-25.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 20:18 falha_2026-07-26_20-18-15.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 20:18 falha_2026-07-26_20-18-58.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 20:19 falha_2026-07-26_20-19-13.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 20:19 falha_2026-07-26_20-19-29.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 20:20 falha_2026-07-26_20-20-00.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 20:21 falha_2026-07-26_20-21-01.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 20:22 falha_2026-07-26_20-22-04.txt
+-rw-r--r-- 1 pi pi     454 Jul 26 20:22 falha_2026-07-26_20-22-40.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 20:22 falha_2026-07-26_20-22-55.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 20:23 falha_2026-07-26_20-23-07.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 20:25 falha_2026-07-26_20-25-35.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 20:26 falha_2026-07-26_20-26-38.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 20:27 falha_2026-07-26_20-27-39.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 20:28 falha_2026-07-26_20-28-59.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 20:29 falha_2026-07-26_20-29-44.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 20:30 falha_2026-07-26_20-30-07.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 20:30 falha_2026-07-26_20-30-51.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 20:31 falha_2026-07-26_20-31-15.txt
+-rw-r--r-- 1 pi pi     481 Jul 26 20:32 falha_2026-07-26_20-32-25.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 20:32 falha_2026-07-26_20-32-45.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 20:32 falha_2026-07-26_20-32-58.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 20:33 falha_2026-07-26_20-33-51.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 20:34 falha_2026-07-26_20-34-20.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 20:34 falha_2026-07-26_20-34-47.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 20:36 falha_2026-07-26_20-36-12.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 20:36 falha_2026-07-26_20-36-37.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 20:37 falha_2026-07-26_20-37-25.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 20:38 falha_2026-07-26_20-38-35.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 20:40 falha_2026-07-26_20-40-04.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 20:41 falha_2026-07-26_20-41-26.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 20:41 falha_2026-07-26_20-41-53.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 20:42 falha_2026-07-26_20-42-48.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 20:44 falha_2026-07-26_20-44-14.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 20:46 falha_2026-07-26_20-46-44.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 20:48 falha_2026-07-26_20-48-18.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 20:49 falha_2026-07-26_20-49-06.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 20:50 falha_2026-07-26_20-50-42.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 20:52 falha_2026-07-26_20-52-23.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 20:53 falha_2026-07-26_20-53-34.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 20:56 falha_2026-07-26_20-56-35.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 21:04 falha_2026-07-26_21-04-09.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 21:08 falha_2026-07-26_21-08-14.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 21:08 falha_2026-07-26_21-08-49.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 21:09 falha_2026-07-26_21-09-04.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 21:09 falha_2026-07-26_21-09-48.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 21:10 falha_2026-07-26_21-10-53.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 21:11 falha_2026-07-26_21-11-15.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 21:11 falha_2026-07-26_21-11-40.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 21:13 falha_2026-07-26_21-13-59.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 21:14 falha_2026-07-26_21-14-12.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 21:15 falha_2026-07-26_21-15-35.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 21:18 falha_2026-07-26_21-18-37.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 21:23 falha_2026-07-26_21-23-59.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 21:24 falha_2026-07-26_21-24-38.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 21:25 falha_2026-07-26_21-25-51.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 21:28 falha_2026-07-26_21-28-03.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 21:31 falha_2026-07-26_21-31-55.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 21:34 falha_2026-07-26_21-34-58.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 21:36 falha_2026-07-26_21-36-55.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 21:37 falha_2026-07-26_21-37-17.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 21:40 falha_2026-07-26_21-40-48.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 21:41 falha_2026-07-26_21-41-07.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 21:44 falha_2026-07-26_21-44-39.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 21:48 falha_2026-07-26_21-48-26.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 21:52 falha_2026-07-26_21-52-17.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 21:55 falha_2026-07-26_21-55-56.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 21:58 falha_2026-07-26_21-58-01.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 21:58 falha_2026-07-26_21-58-39.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 22:00 falha_2026-07-26_22-00-42.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 22:01 falha_2026-07-26_22-01-26.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 22:01 falha_2026-07-26_22-01-58.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 22:03 falha_2026-07-26_22-03-00.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 22:07 falha_2026-07-26_22-07-00.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 22:08 falha_2026-07-26_22-08-18.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 22:08 falha_2026-07-26_22-08-33.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 22:08 falha_2026-07-26_22-08-56.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 22:09 falha_2026-07-26_22-09-11.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 22:09 falha_2026-07-26_22-09-26.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 22:09 falha_2026-07-26_22-09-42.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 22:10 falha_2026-07-26_22-10-14.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 22:10 falha_2026-07-26_22-10-32.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 22:10 falha_2026-07-26_22-10-56.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 22:11 falha_2026-07-26_22-11-22.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 22:12 falha_2026-07-26_22-12-16.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 22:12 falha_2026-07-26_22-12-32.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 22:12 falha_2026-07-26_22-12-56.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 22:13 falha_2026-07-26_22-13-09.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 22:14 falha_2026-07-26_22-14-11.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 22:14 falha_2026-07-26_22-14-48.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 22:15 falha_2026-07-26_22-15-09.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 22:17 falha_2026-07-26_22-17-03.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 22:17 falha_2026-07-26_22-17-22.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 22:17 falha_2026-07-26_22-17-42.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 22:18 falha_2026-07-26_22-18-11.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 22:19 falha_2026-07-26_22-19-28.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 22:19 falha_2026-07-26_22-19-50.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 22:20 falha_2026-07-26_22-20-09.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 22:20 falha_2026-07-26_22-20-37.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 22:24 falha_2026-07-26_22-24-22.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 22:24 falha_2026-07-26_22-24-44.txt
+-rw-r--r-- 1 pi pi     454 Jul 26 22:27 falha_2026-07-26_22-27-09.txt
+-rw-r--r-- 1 pi pi     454 Jul 26 22:27 falha_2026-07-26_22-27-34.txt
+-rw-r--r-- 1 pi pi     454 Jul 26 22:28 falha_2026-07-26_22-28-04.txt
+-rw-r--r-- 1 pi pi     454 Jul 26 22:28 falha_2026-07-26_22-28-20.txt
+-rw-r--r-- 1 pi pi     454 Jul 26 22:29 falha_2026-07-26_22-29-00.txt
+-rw-r--r-- 1 pi pi     454 Jul 26 22:29 falha_2026-07-26_22-29-38.txt
+-rw-r--r-- 1 pi pi     454 Jul 26 22:30 falha_2026-07-26_22-30-38.txt
+-rw-r--r-- 1 pi pi     454 Jul 26 22:31 falha_2026-07-26_22-31-38.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 22:31 falha_2026-07-26_22-31-52.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 22:34 falha_2026-07-26_22-34-15.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 22:34 falha_2026-07-26_22-34-26.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 22:34 falha_2026-07-26_22-34-53.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 22:36 falha_2026-07-26_22-36-37.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 22:36 falha_2026-07-26_22-36-56.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 22:38 falha_2026-07-26_22-38-22.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 22:38 falha_2026-07-26_22-38-53.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 22:39 falha_2026-07-26_22-39-49.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 22:43 falha_2026-07-26_22-43-03.txt
+-rw-r--r-- 1 pi pi     454 Jul 26 22:44 falha_2026-07-26_22-44-49.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 22:45 falha_2026-07-26_22-45-16.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 22:45 falha_2026-07-26_22-45-31.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 22:45 falha_2026-07-26_22-45-53.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 22:48 falha_2026-07-26_22-48-08.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 22:48 falha_2026-07-26_22-48-21.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 22:48 falha_2026-07-26_22-48-49.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 22:49 falha_2026-07-26_22-49-09.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 22:51 falha_2026-07-26_22-51-14.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 22:52 falha_2026-07-26_22-52-19.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 22:54 falha_2026-07-26_22-54-27.txt
+-rw-r--r-- 1 pi pi     454 Jul 26 22:55 falha_2026-07-26_22-55-19.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 22:56 falha_2026-07-26_22-56-10.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 22:56 falha_2026-07-26_22-56-30.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 22:57 falha_2026-07-26_22-57-57.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 22:58 falha_2026-07-26_22-58-18.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 22:59 falha_2026-07-26_22-59-06.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 23:00 falha_2026-07-26_23-00-03.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 23:00 falha_2026-07-26_23-00-49.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 23:01 falha_2026-07-26_23-01-13.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 23:02 falha_2026-07-26_23-02-16.txt
+-rw-r--r-- 1 pi pi     454 Jul 26 23:03 falha_2026-07-26_23-03-34.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 23:04 falha_2026-07-26_23-04-00.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 23:04 falha_2026-07-26_23-04-17.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 23:04 falha_2026-07-26_23-04-40.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 23:06 falha_2026-07-26_23-06-07.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 23:06 falha_2026-07-26_23-06-42.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 23:07 falha_2026-07-26_23-07-00.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 23:07 falha_2026-07-26_23-07-48.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 23:08 falha_2026-07-26_23-08-06.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 23:08 falha_2026-07-26_23-08-20.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 23:08 falha_2026-07-26_23-08-42.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 23:09 falha_2026-07-26_23-09-06.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 23:09 falha_2026-07-26_23-09-33.txt
+-rw-r--r-- 1 pi pi     454 Jul 26 23:10 falha_2026-07-26_23-10-17.txt
+-rw-r--r-- 1 pi pi     454 Jul 26 23:11 falha_2026-07-26_23-11-02.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 23:11 falha_2026-07-26_23-11-26.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 23:11 falha_2026-07-26_23-11-45.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 23:13 falha_2026-07-26_23-13-11.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 23:13 falha_2026-07-26_23-13-35.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 23:13 falha_2026-07-26_23-13-50.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 23:15 falha_2026-07-26_23-15-49.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 23:17 falha_2026-07-26_23-17-42.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 23:19 falha_2026-07-26_23-19-44.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 23:20 falha_2026-07-26_23-20-53.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 23:21 falha_2026-07-26_23-21-17.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 23:22 falha_2026-07-26_23-22-06.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 23:24 falha_2026-07-26_23-24-05.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 23:26 falha_2026-07-26_23-26-45.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 23:27 falha_2026-07-26_23-27-22.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 23:28 falha_2026-07-26_23-28-49.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 23:29 falha_2026-07-26_23-29-36.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 23:30 falha_2026-07-26_23-30-15.txt
+-rw-r--r-- 1 pi pi     454 Jul 26 23:30 falha_2026-07-26_23-30-52.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 23:31 falha_2026-07-26_23-31-16.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 23:31 falha_2026-07-26_23-31-40.txt
+-rw-r--r-- 1 pi pi     454 Jul 26 23:32 falha_2026-07-26_23-32-34.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 23:34 falha_2026-07-26_23-34-35.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 23:35 falha_2026-07-26_23-35-14.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 23:35 falha_2026-07-26_23-35-45.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 23:36 falha_2026-07-26_23-36-26.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 23:37 falha_2026-07-26_23-37-17.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 23:37 falha_2026-07-26_23-37-37.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 23:38 falha_2026-07-26_23-38-03.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 23:39 falha_2026-07-26_23-39-42.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 23:41 falha_2026-07-26_23-41-44.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 23:42 falha_2026-07-26_23-42-05.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 23:42 falha_2026-07-26_23-42-31.txt
+-rw-r--r-- 1 pi pi     454 Jul 26 23:43 falha_2026-07-26_23-43-09.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 23:43 falha_2026-07-26_23-43-25.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 23:43 falha_2026-07-26_23-43-39.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 23:43 falha_2026-07-26_23-43-55.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 23:44 falha_2026-07-26_23-44-43.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 23:45 falha_2026-07-26_23-45-00.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 23:45 falha_2026-07-26_23-45-57.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 23:46 falha_2026-07-26_23-46-20.txt
+-rw-r--r-- 1 pi pi     454 Jul 26 23:47 falha_2026-07-26_23-47-03.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 23:48 falha_2026-07-26_23-48-13.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 23:48 falha_2026-07-26_23-48-38.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 23:49 falha_2026-07-26_23-49-25.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 23:50 falha_2026-07-26_23-50-32.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 23:51 falha_2026-07-26_23-51-20.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 23:52 falha_2026-07-26_23-52-05.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 23:52 falha_2026-07-26_23-52-22.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 23:53 falha_2026-07-26_23-53-27.txt
+-rw-r--r-- 1 pi pi     454 Jul 26 23:54 falha_2026-07-26_23-54-41.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 23:55 falha_2026-07-26_23-55-05.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 23:55 falha_2026-07-26_23-55-52.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 23:56 falha_2026-07-26_23-56-12.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 23:56 falha_2026-07-26_23-56-58.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 23:57 falha_2026-07-26_23-57-12.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 23:57 falha_2026-07-26_23-57-35.txt
+-rw-r--r-- 1 pi pi     467 Jul 26 23:58 falha_2026-07-26_23-58-42.txt
+==> /home/pi/Desktop/logs_failure/falha_2026-07-26_08-24-24.txt <==
+MĂ­nimo: 0.870 V
+MĂŠdia: 0.918 V
+Mediana: 0.936 V
+Moda: 0.936 V
+Desvio padrĂŁo: 0.029 V
+
+==> /home/pi/Desktop/logs_failure/falha_2026-07-26_08-26-59.txt <==
+MĂ­nimo: 0.870 V
+MĂŠdia: 0.930 V
+Mediana: 0.936 V
+Moda: 0.936 V
+Desvio padrĂŁo: 0.019 V
+
+==> /home/pi/Desktop/logs_failure/falha_2026-07-26_08-28-28.txt <==
+MĂ­nimo: 0.870 V
+MĂŠdia: 0.923 V
+Mediana: 0.936 V
+Moda: 0.936 V
+Desvio padrĂŁo: 0.027 V
+
+==> /home/pi/Desktop/logs_failure/falha_2026-07-26_08-39-10.txt <==
+MĂ­nimo: 0.870 V
+MĂŠdia: 0.917 V
+Mediana: 0.936 V
+Moda: 0.936 V
+Desvio padrĂŁo: 0.030 V
+
+==> /home/pi/Desktop/logs_failure/falha_2026-07-26_09-04-49.txt <==
+MĂ­nimo: 0.870 V
+MĂŠdia: 0.917 V
+Mediana: 0.936 V
+Moda: 0.936 V
+Desvio padrĂŁo: 0.030 V
+
+==> /home/pi/Desktop/logs_failure/falha_2026-07-26_09-05-02.txt <==
+MĂ­nimo: 0.870 V
+MĂŠdia: 0.916 V
+Mediana: 0.936 V
+Moda: 0.936 V
+Desvio padrĂŁo: 0.030 V
+
+==> /home/pi/Desktop/logs_failure/falha_2026-07-26_09-11-32.txt <==
+MĂ­nimo: 0.870 V
+MĂŠdia: 0.914 V
+Mediana: 0.936 V
+Moda: 0.936 V
+Desvio padrĂŁo: 0.031 V
+
+==> /home/pi/Desktop/logs_failure/falha_2026-07-26_09-21-02.txt <==
+MĂ­nimo: 0.870 V
+MĂŠdia: 0.908 V
+Mediana: 0.936 V
+Moda: 0.936 V
+Desvio padrĂŁo: 0.033 V
+
+==> /home/pi/Desktop/logs_failure/falha_2026-07-26_09-32-41.txt <==
+MĂ­nimo: 0.870 V
+MĂŠdia: 0.914 V
+Mediana: 0.936 V
+Moda: 0.936 V
+Desvio padrĂŁo: 0.031 V
+
+==> /home/pi/Desktop/logs_failure/falha_2026-07-26_09-35-57.txt <==
+MĂ­nimo: 0.870 V
+MĂŠdia: 0.913 V
+Mediana: 0.936 V
+Moda: 0.936 V
+Desvio padrĂŁo: 0.031 V
+
+==> /home/pi/Desktop/logs_failure/falha_2026-07-26_10-03-10.txt <==
+MĂ­nimo: 0.870 V
+MĂŠdia: 0.910 V
+Mediana: 0.936 V
+Moda: 0.936 V
+Desvio padrĂŁo: 0.032 V
+
+==> /home/pi/Desktop/logs_failure/falha_2026-07-26_10-03-26.txt <==
+MĂ­nimo: 0.870 V
+MĂŠdia: 0.908 V
+Mediana: 0.936 V
+Moda: 0.936 V
+Desvio padrĂŁo: 0.033 V
+
+==> /home/pi/Desktop/logs_failure/falha_2026-07-26_10-03-41.txt <==
+MĂ­nimo: 0.870 V
+MĂŠdia: 0.908 V
+Mediana: 0.936 V
+Moda: 0.936 V
+Desvio padrĂŁo: 0.033 V
+
+==> /home/pi/Desktop/logs_failure/falha_2026-07-26_10-04-20.txt <==
+MĂ­nimo: 0.870 V
+MĂŠdia: 0.908 V
+Mediana: 0.936 V
+Moda: 0.936 V
+Desvio padrĂŁo: 0.033 V
+
+==> /home/pi/Desktop/logs_failure/falha_2026-07-26_10-23-28.txt <==
+MĂ­nimo: 0.870 V

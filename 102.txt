@@ -1,0 +1,119 @@
+===== IDENTIDADE =====
+guaruja
+Raspberry Pi 4 Model B Rev 1.5 
+PRETTY_NAME="Debian GNU/Linux 12 (bookworm)"
+NAME="Debian GNU/Linux"
+Linux guaruja 6.6.51+rpt-rpi-v8 #1 SMP PREEMPT Debian 1:6.6.51-1+rpt3 (2024-10-08) aarch64 GNU/Linux
+Python 3.11.2
+===== RELOGIO =====
+Fri Jul 10 10:50:57 AM -03 2026
+               Local time: Fri 2026-07-10 10:50:58 -03
+           Universal time: Fri 2026-07-10 13:50:58 UTC
+                 RTC time: n/a
+                Time zone: America/Sao_Paulo (-03, -0300)
+System clock synchronized: no
+              NTP service: inactive
+          RTC in local TZ: no
+===== UPTIME/CARGA =====
+ 10:50:58 up 21:59,  2 users,  load average: 0.46, 0.33, 0.29
+               total        used        free      shared  buff/cache   available
+Mem:           7.6Gi       585Mi       5.6Gi        54Mi       1.7Gi       7.1Gi
+Swap:          199Mi          0B       199Mi
+Filesystem      Size  Used Avail Use% Mounted on
+udev            3.6G     0  3.6G   0% /dev
+tmpfs           781M  1.3M  780M   1% /run
+/dev/mmcblk0p2  469G  140G  306G  32% /
+tmpfs           3.9G  8.0K  3.9G   1% /dev/shm
+tmpfs           5.0M   16K  5.0M   1% /run/lock
+/dev/mmcblk0p1  510M   76M  435M  15% /boot/firmware
+tmpfs           781M   44K  781M   1% /run/user/1000
+NAME      TYPE SIZE USED PRIO
+/var/swap file 200M   0B   -2
+===== ENERGIA/TEMP =====
+throttled=0x0
+temp=59.9'C
+volt=0.9660V
+===== PSI DISPONIVEL? =====
+ls: cannot access '/proc/pressure/': No such file or directory
+cat: '/proc/pressure/*': No such file or directory
+===== ERROS DE KERNEL (I/O, OOM, undervolt) =====
+[    2.239523] mmc-bcm2835 fe300000.mmcnr: mmc_debug:0 mmc_debug2:0
+[    2.239551] mmc-bcm2835 fe300000.mmcnr: DMA channel allocated
+[    2.305119] mmc0: SDHCI controller on fe340000.mmc [fe340000.mmc] using ADMA
+[    2.354883] mmc1: new high speed SDIO card at address 0001
+[    2.411058] mmc0: new ultra high speed DDR50 SDXC card at address aaaa
+[    2.411941] mmcblk0: mmc0:aaaa SN512 477 GiB
+[    2.414593]  mmcblk0: p1 p2
+[    2.415136] mmcblk0: mmc0:aaaa SN512 477 GiB (quirks 0x00004000)
+[    3.055624] rtc-ds1307: probe of 1-0068 failed with error -5
+[    4.130885] EXT4-fs (mmcblk0p2): mounted filesystem fc7a1f9e-4967-4f41-a1f5-1b5927e6c5f9 ro with ordered data mode. Quota mode: none.
+[    6.560684] EXT4-fs (mmcblk0p2): re-mounted fc7a1f9e-4967-4f41-a1f5-1b5927e6c5f9 r/w. Quota mode: none.
+===== O QUE INICIA NO BOOT =====
+no crontab for pi
+ls: cannot access '/home/pi/.config/autostart/': No such file or directory
+cat: '/home/pi/.config/autostart/*.desktop': No such file or directory
+
+_IP=$(hostname -I) || true
+if [ "$_IP" ]; then
+  printf "My IP address is %s\n" "$_IP"
+fi
+
+
+echo ds1307 0x68>/sys/class/i2c-adapter/i2c-1/new_device
+hwclock -s
+
+exit 0
+  UNIT                           LOAD   ACTIVE SUB     DESCRIPTION
+  accounts-daemon.service        loaded active running Accounts Service
+  colord.service                 loaded active running Manage, Install and Generate Color Profiles
+  cups-browsed.service           loaded active running Make remote CUPS printers available locally
+  cups.service                   loaded active running CUPS Scheduler
+  getty@tty1.service             loaded active running Getty on tty1
+  lightdm.service                loaded active running Light Display Manager
+  ModemManager.service           loaded active running Modem Manager
+  polkit.service                 loaded active running Authorization Manager
+  rtkit-daemon.service           loaded active running RealtimeKit Scheduling Policy Service
+  udisks2.service                loaded active running Disk Manager
+  user@1000.service              loaded active running User Manager for UID 1000
+  vncserver-x11-serviced.service loaded active running VNC Server in Service Mode daemon
+  vsftpd.service                 loaded active running vsftpd FTP server
+  wpa_supplicant.service         loaded active running WPA supplicant
+
+LOAD   = Reflects whether the unit definition was properly loaded.
+ACTIVE = The high-level unit activation state, i.e. generalization of SUB.
+SUB    = The low-level unit activation state, values depend on unit type.
+25 loaded units listed.
+===== PROCESSOS DO PROJETO =====
+root          52  0.0  0.0      0     0 ?        S    Jul09   0:00 [watchdogd]
+pi          1185 13.5  1.6 1081696 129752 tty1   SLl+ Jul09 179:21 python3 /home/pi/Desktop/Porto_de_Santos_2025/PRINCIPAL/2026_02_05_Cliente_H01.py
+===== REDE =====
+lo               UNKNOWN        127.0.0.1/8 ::1/128 
+eth0             UP             192.168.11.102/24 fe80::4adb:6dee:50dd:460c/64 
+wlan0            DOWN           
+default via 192.168.11.254 dev eth0 proto dhcp src 192.168.11.102 metric 100 
+192.168.11.0/24 dev eth0 proto kernel scope link src 192.168.11.102 metric 100 
+wlan0     IEEE 802.11  ESSID:off/any  
+          Mode:Managed  Access Point: Not-Associated   
+          Retry short limit:7   RTS thr:off   Fragment thr:off
+          Power Management:on
+          
+===== ALCANCA ENODEB E CPE? =====
+--- 192.168.10.100
+2 packets transmitted, 0 received, 100% packet loss, time 1015ms
+
+HTTP 000
+--- 192.168.10.101
+2 packets transmitted, 0 received, 100% packet loss, time 1010ms
+
+HTTP 000
+--- 192.168.10.102
+2 packets transmitted, 2 received, 0% packet loss, time 1022ms
+rtt min/avg/max/mdev = 0.379/0.409/0.440/0.030 ms
+HTTP 000
+--- 192.168.10.103
+2 packets transmitted, 0 received, 100% packet loss, time 1029ms
+
+HTTP 000
+===== LOGS DE FALHA =====
+ls: cannot access '/home/pi/Desktop/logs_failure/': No such file or directory
+tail: cannot open '/home/pi/Desktop/logs_failure/*' for reading: No such file or directory
