@@ -8,12 +8,46 @@ reversível de forma independente.
 2. **Servidor NTP:** PowerShell como admin → `.\enable_ntp_server.ps1`.
    Validar: `w32tm /query /status` mostra fonte e stratum.
 3. **Timeout do servidor de imagens:**
-   - Fechar a janela "Servidor_receb_Imagens_Rasp" (as câmeras entram em
-     reconexão automática — sem pressa).
-   - Backup: copiar o `.py` atual para `rasp_101.py.bak-<data>`.
-   - Substituir pelo `deploy/pc/Servidor_receb_Imagens_Rasp.py`.
-   - Rodar de novo (mesmo atalho de sempre). Validar: as 3 câmeras
-     reconectam (🟢 no console) e `logs_failure` da 106 para de crescer.
+
+   > ⚠️ Em 19/08 este passo foi dado como aplicado e **não estava**: o patch foi
+   > escrito no `2026_02_01_Server_H00.py`, que **não é o arquivo de
+   > produção**. O servidor rodou mais um dia inteiro com timeout de 1 s.
+
+   - **Descobrir qual arquivo está realmente rodando.** Não confie no nome do
+     arquivo nem no título da janela:
+     ```powershell
+     Get-CimInstance Win32_Process -Filter "Name='python.exe'" |
+       Select-Object ProcessId, CreationDate, CommandLine | Format-List
+     ```
+     Em 20/08/2026: `C:\Users\CILIP\Documents\2026_02_01_Server_H00.py`,
+     lançado pelo Python do Anaconda.
+   - Conferir que o processo não é mais velho que o arquivo — Python lê o `.py`
+     uma única vez, na inicialização. Arquivo editado depois do `CreationDate`
+     do processo = patch no disco, código velho na memória.
+   - Backup: `Copy-Item $f "$f.bak-<data>"`.
+   - **Edição mínima, uma linha.** Não substituir o arquivo inteiro: há várias
+     versões em circulação (F6) e não se sabe como a de produção diverge em
+     `HOST`, `SAVE_PATH` ou `save_every`.
+     `INTERVAL = 15 if client_id == "105" else 1` → `INTERVAL = 30`
+   - **Reiniciar parando e subindo no mesmo comando.** Se o servidor ficar fora
+     por mais de ~10 s, o `connect()` da câmera falha, o `main()` do cliente
+     chama `restart_router()` e o CPE 192.168.11.254 reinicia — derrubando a 102
+     e a 106 juntas, com backoff até 1800 s (achado 3.1). Uma queda com o
+     servidor no ar é inofensiva: cai no `except` interno do `capture_and_send()`,
+     que espera 10 s e reconecta sem tocar no CPE.
+     ```powershell
+     Stop-Process -Id <pid>; Start-Process "C:\ProgramData\anaconda3\python.exe" -ArgumentList '"C:\Users\CILIP\Documents\2026_02_01_Server_H00.py"'
+     ```
+   - **Validar de verdade.** A linha `SERVIDOR INICIADO` no `LOG_connections.txt`
+     **não prova que o servidor subiu**: ela é gravada *antes* do `srv.bind()`,
+     então aparece igual quando a porta já está ocupada e o processo morre em
+     seguida. Aconteceu em 20/08 às 20:45:36 — linha no log, servidor nenhum.
+     O que prova:
+     ```powershell
+     netstat -ano | findstr :55000     # precisa ter LISTENING no PID novo
+     ```
+     mais três linhas `CONNECT` novas no `LOG_connections.txt` em até ~20 s, e o
+     `logs_failure` da 106 parando de crescer.
 
 ## B. No web UI do CPE ELSYS do SPA (~5 min)
 4. Encaminhamento de porta: **UDP 123 → 192.168.11.101** (NTP).
