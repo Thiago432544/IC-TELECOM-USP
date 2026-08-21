@@ -39,5 +39,8 @@ link_rsrp_min = -110.0
 link_rsrq_min = -15.0
 link_after_s = 300
 
+[charts]
+outage_min_s = 0    # 0 = piso automatico pela janela (30min->30s, 24h->5min)
+
 [panel]
 port = 8080

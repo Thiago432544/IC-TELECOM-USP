@@ -8,8 +8,9 @@ from pathlib import Path
 from monitor.alerts import AlertEngine, CamState, Snapshot
 from monitor.baseline import hourly_baseline
 from monitor.bot import BotHandler
-from monitor.charts import render_camera_chart
+from monitor.charts import render_metric_chart
 from monitor.config import Config, load_config
+from monitor.metrics import DEFAULT_WINDOW, find_metric, outage_floor
 from monitor.cpe import CpeScraper
 from monitor.panel import run_panel
 from monitor.store import Store
@@ -50,6 +51,41 @@ def should_send_summary(last_sent_date, now, hour) -> bool:
     return lt.tm_hour >= hour and last_sent_date != today
 
 
+def alert_chart(store: Store, cfg: Config, camera: str, now: float) -> bytes:
+    """Grafico que acompanha um alerta: conexao na janela padrao."""
+    janela = DEFAULT_WINDOW
+    piso = outage_floor(janela, cfg.charts.outage_min_s or None)
+    return render_metric_chart(store, camera, find_metric("conexao"), now,
+                               janela, piso)
+
+
+def route_update(handler, tg, upd: dict, now: float) -> bool:
+    """Trata um update do Telegram. True se respondeu alguma coisa.
+
+    Toque em botao edita a foto que ja esta no chat em vez de mandar outra -
+    e' o que faz os botoes valerem a pena em vez de virarem enxurrada.
+    """
+    cb = upd.get("callback_query")
+    if cb:
+        # antes de desenhar: senao o botao fica girando no celular
+        tg.answer_callback(cb.get("id", ""))
+        r = handler.handle_callback(cb.get("data", ""), now)
+        msg = cb.get("message", {})
+        if r.png:
+            tg.edit_photo(msg.get("chat", {}).get("id"), msg.get("message_id"),
+                          r.png, r.text, r.buttons)
+        return True
+    text = upd.get("message", {}).get("text", "")
+    if not text.startswith("/"):
+        return False
+    r = handler.handle(text, now)
+    if r.png:
+        tg.send_photo(r.png, r.text, r.buttons)
+    else:
+        tg.send_text(r.text)
+    return True
+
+
 def _forever(store: Store, name: str, fn, interval: float):
     def run():
         while True:
@@ -78,7 +114,8 @@ def main(config_path: str = "config.toml"):
     follower = LogFollower(cfg.paths.log, on_event=lambda ev: store.add_event(
         ev.ts, ev.client or "server", ev.kind, ev.detail))
     scraper = CpeScraper(cfg.cpe) if cfg.cpe.enabled else None
-    state = {"summary_date": None, "last_purge": 0.0}
+    handler = BotHandler(store, cfg)
+    state = {"summary_date": None, "last_purge": 0.0, "bot_offset": 0}
 
     def watch():
         now = time.time()
@@ -113,7 +150,7 @@ def main(config_path: str = "config.toml"):
                 continue
             if a.wants_chart:
                 cam = a.origin if a.origin in cfg.cameras else next(iter(cfg.cameras))
-                tg.send_photo(render_camera_chart(store, cam, now), a.text)
+                tg.send_photo(alert_chart(store, cfg, cam, now), a.text)
             else:
                 tg.send_text(a.text)
         if should_send_summary(state["summary_date"], now, cfg.summary_hour):
@@ -125,18 +162,9 @@ def main(config_path: str = "config.toml"):
             store.purge(now)
 
     def bot_loop():
-        handler = BotHandler(store, cfg)
-        offset = 0
-        while True:
-            for upd in tg.get_updates(offset):
-                offset = upd["update_id"] + 1
-                text = upd.get("message", {}).get("text", "")
-                if text.startswith("/"):
-                    reply, png = handler.handle(text, time.time())
-                    if png:
-                        tg.send_photo(png, reply)
-                    else:
-                        tg.send_text(reply)
+        for upd in tg.get_updates(state["bot_offset"]):
+            state["bot_offset"] = upd["update_id"] + 1
+            route_update(handler, tg, upd, time.time())
 
     _forever(store, "taplog", follower.poll, 2)
     _forever(store, "watcher", watch, 10)

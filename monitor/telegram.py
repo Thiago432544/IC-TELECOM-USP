@@ -17,6 +17,15 @@ def _default_post(url, data, files=None) -> bool:
         return False
 
 
+def _markup(buttons) -> str:
+    return json.dumps({"inline_keyboard": [
+        [{"text": t, "callback_data": d} for t, d in buttons]]})
+
+
+def _foto(png: bytes) -> dict:
+    return {"photo": ("chart.png", png, "image/png")}
+
+
 class TelegramClient:
     def __init__(self, cfg: TelegramCfg, data_dir: Path,
                  post: Optional[Callable] = None):
@@ -36,13 +45,34 @@ class TelegramClient:
                 f.write(json.dumps({"ts": time.time(), "text": text}) + "\n")
         return ok
 
-    def send_photo(self, png: bytes, caption: str) -> bool:
-        ok = self._post(self._api("sendPhoto"),
-                        {"chat_id": self.cfg.chat_id, "caption": caption},
-                        files={"photo": ("chart.png", png, "image/png")})
+    def send_photo(self, png: bytes, caption: str, buttons=None) -> bool:
+        data = {"chat_id": self.cfg.chat_id, "caption": caption}
+        if buttons:
+            data["reply_markup"] = _markup(buttons)
+        ok = self._post(self._api("sendPhoto"), data,
+                        files=_foto(png))
         if not ok:
             self.send_text(caption + " [grafico indisponivel na hora do envio]")
         return ok
+
+    def edit_photo(self, chat_id, message_id, png: bytes, caption: str,
+                   buttons=None) -> bool:
+        """Troca a imagem na mensagem que ja esta no chat.
+
+        Falha nao vai para a outbox de proposito: reenviar um grafico velho
+        horas depois nao ajuda ninguem.
+        """
+        data = {"chat_id": chat_id, "message_id": message_id,
+                "media": json.dumps({"type": "photo", "media": "attach://photo",
+                                     "caption": caption})}
+        if buttons:
+            data["reply_markup"] = _markup(buttons)
+        return self._post(self._api("editMessageMedia"), data, files=_foto(png))
+
+    def answer_callback(self, callback_id: str, text: str = "") -> bool:
+        """Sem isso o Telegram deixa o botao girando no celular."""
+        return self._post(self._api("answerCallbackQuery"),
+                          {"callback_query_id": callback_id, "text": text})
 
     def flush_outbox(self) -> int:
         if not self._outbox.exists():
