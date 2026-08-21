@@ -25,11 +25,13 @@ Contexto completo: [`docs/superpowers/specs/`](docs/superpowers/specs/).
 
 | Fase | O que é | Estado |
 |------|---------|--------|
-| **1 — Estancar** | Correções no que já está quebrado (timeout, autostart, watchdog, NTP) | Código pronto, **não aplicado em campo** |
-| **2 — Ver e avisar** | Coletor + bot Telegram + painel, no PC do SPA | Código pronto e testado, **não instalado** |
+| **1 — Estancar** | Correções no que já está quebrado (timeout, autostart, watchdog, NTP) | Servidor do PC **corrigido e no ar** desde 20/08 22:33 (F2, F11, F12, F13). Autostart, NTP e itens de hardware nas Rasps: **pendentes** |
+| **2 — Ver e avisar** | Coletor + bot Telegram + painel, no PC do SPA | Monitor **rodando** desde 19/08 16:26. Telegram **mudo** — `enabled` nunca verificado |
 | **3 — Caixa-preta** | Agente nas Rasps + watchdog de hardware | Planejada, não iniciada |
 
-Nada foi aplicado no Porto ainda. A ordem de aplicação está nos runbooks.
+O servidor do PC já roda as correções. O que falta depende de ir a campo, e a
+ordem está nos runbooks. Estado detalhado e catálogo de achados no diário mais
+recente: [`docs/diario/2026-08-20-sessao.md`](docs/diario/2026-08-20-sessao.md).
 
 ## Como começar
 
@@ -72,6 +74,7 @@ deploy/pc/        patches e instaladores do PC do SPA
 deploy/rasp/      unit systemd, NTP e watchdog blindado das Rasps
 docs/evidencias/  diagnósticos de campo que embasaram o design
 docs/runbooks/    passo a passo de aplicação
+docs/diario/      registro por sessão: o que foi feito, achado e refutado
 docs/superpowers/ spec (design aprovado) e plano de implementação
 tests/            pytest — roda inteiro sem depender do Porto
 ```
