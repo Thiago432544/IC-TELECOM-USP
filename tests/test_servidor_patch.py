@@ -3,7 +3,7 @@ import sys
 import types
 from pathlib import Path
 
-SRV = Path("deploy/pc/Servidor_receb_Imagens_Rasp.py")
+SRV = Path("deploy/pc/2026_02_01_Server_H00.py")
 
 def _load():
     # cv2/numpy nao existem na maquina de dev; o modulo so os usa dentro de funcoes
