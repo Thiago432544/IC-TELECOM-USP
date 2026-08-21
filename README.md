@@ -63,9 +63,11 @@ monitor/          o coletor (roda no PC Windows do SPA)
   store.py          SQLite: série temporal + eventos, retenção de 90 dias
   baseline.py       linha de base por câmera e hora do dia (mediana de 7 dias)
   alerts.py         máquina de estados dos alertas, com anti-ruído
+  uptime.py         reconstrói quedas reais a partir da idade do último frame
+  metrics.py        registry de métricas e o piso de queda por janela
   telegram.py       Bot API + fila em disco para quando a internet cai
-  charts.py         PNG dos últimos 30 min anexado ao alerta
-  bot.py            /status e /grafico <id>
+  charts.py         faixa de conexão e séries; PNG anexado ao alerta
+  bot.py            /status, /metricas e /grafico <câmera> [métrica] [janela]
   panel.py          painel HTTP local
   summary.py        resumo diário das 08:00
   service.py        fiação: threads supervisionadas
@@ -78,6 +80,45 @@ docs/diario/      registro por sessão: o que foi feito, achado e refutado
 docs/superpowers/ spec (design aprovado) e plano de implementação
 tests/            pytest — roda inteiro sem depender do Porto
 ```
+
+## O bot no Telegram
+
+```
+/status                    estado atual das três câmeras
+/grafico 106               conexão da 106 nas últimas 24h
+/grafico 106 2h            outra janela
+/grafico 106 frames 12h    outra métrica
+/grafico 2h 106            a ordem dos argumentos não importa
+/metricas                  o que dá para plotar
+```
+
+O gráfico chega com botões de `30min · 1h · 2h · 12h · 24h`; tocar troca a
+imagem na mesma mensagem em vez de mandar outra.
+
+**O gráfico de conexão não conta frames — conta tempo fora.** Cheio = a câmera
+estava entregando, vazado = estava fora, cinza = o monitor não estava no ar
+(ignorância nunca é pintada de verde). Até 24h é uma faixa só; acima disso vira
+uma linha por dia, para comparar o mesmo horário entre dias.
+
+**O piso acompanha o zoom.** Uma queda só entra no gráfico se durar mais que o
+piso da janela — senão os ~276 eventos de instabilidade da 106 voltam a saturar
+o desenho, que era o problema do gráfico de frames/min.
+
+| Janela | Piso | O que você vê |
+|--------|------|---------------|
+| 30min, 1h, 2h | 30 s | cada reconexão |
+| 12h | 2 min | interrupção de verdade |
+| 24h | 5 min | interrupção de verdade |
+| 7d | 30 min | só pane |
+
+O piso nunca desce de 30 s: com `save_every = 10` o servidor grava um arquivo a
+cada ~10 s, então a idade do último frame de uma câmera saudável já oscila até
+~10 s. Ele aparece sempre na legenda (`>=5min`), e `/grafico 106 24h 30s` força
+outro na mão.
+
+`cpu`, `temperatura` e `memoria` já estão no registry e respondem *"depende do
+agente da Fase 3"* — o dado é de dentro da Rasp e não existe caminho para ele
+hoje.
 
 ## Princípios de projeto
 

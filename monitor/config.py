@@ -45,6 +45,10 @@ class AlertCfg:
     link_after_s: int
 
 @dataclass(frozen=True)
+class ChartsCfg:
+    outage_min_s: int = 0        # 0 = piso automatico, derivado da janela
+
+@dataclass(frozen=True)
 class PanelCfg:
     port: int
 
@@ -56,6 +60,7 @@ class Config:
     cpe: CpeCfg
     alerts: AlertCfg
     panel: PanelCfg
+    charts: ChartsCfg
     summary_hour: int
 
 
@@ -68,5 +73,7 @@ def load_config(path: Path) -> Config:
         cpe=CpeCfg(**raw["cpe"]),
         alerts=AlertCfg(**raw["alerts"]),
         panel=PanelCfg(**raw["panel"]),
+        # .get: o config.toml que ja roda no PC do SPA nao tem [charts]
+        charts=ChartsCfg(**raw.get("charts", {})),
         summary_hour=raw["summary_hour"],
     )
