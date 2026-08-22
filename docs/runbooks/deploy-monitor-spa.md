@@ -163,6 +163,16 @@ Tem que chegar a faixa por dia, com os botões `30min · 1h · 2h · 12h · 24h`
 embaixo, e a janela vigente marcada com `•`. Toque em `24h`: a **mesma** imagem
 tem que trocar, sem mandar mensagem nova.
 
+Depois, um comando que a versão antiga respondia com o texto de ajuda:
+
+```
+/grafico rsrp
+```
+
+Na versão nova ele responde um gráfico. Enquanto o CPE não estiver calibrado
+(ver seção 9), o gráfico vem vazio **dizendo o porquê** — isso é o esperado, e
+já prova que o roteamento novo subiu.
+
 **No PC:**
 
 ```powershell
@@ -251,6 +261,40 @@ Start-ScheduledTask -TaskName MonitorCamerasPorto
 
 O banco não precisa de nada: nenhuma tabela mudou, e a versão antiga volta a
 ler exatamente o que lia antes.
+
+## 9. Ligar o RSRP/RSRQ do CPE — o único passo que depende de você
+
+`[cpe] enabled = false` no `config.toml`. Enquanto ficar assim, `/grafico rsrp`
+e `/grafico rsrq` respondem um gráfico vazio explicando que o coletor está
+desligado — e o `/status` diz o mesmo no rodapé, em vez de simplesmente omitir
+o enlace e deixar parecer que ele está bem.
+
+Ligar exige ver a página real do CPE, que só é alcançável de dentro do PC do
+SPA. Da pasta do repo:
+
+```powershell
+python -m monitor.cpe --probe
+```
+
+Ele imprime o HTML da página e o que os regexes atuais capturaram:
+
+```
+rsrp_re capturou: -85.0
+rsrq_re capturou: -12.0
+'Conectado' presente: True
+```
+
+- **Capturou os dois números** → só falta `enabled = true` no `[cpe]` do
+  `config.toml` e reiniciar o monitor. Em ~1 min o gráfico tem ponto.
+- **Capturou `None`** → os regexes não batem com esta página. Procure no HTML
+  impresso como o valor aparece de verdade e ajuste `rsrp_re` / `rsrq_re` no
+  `config.toml`. Eles precisam ter **um** grupo de captura com o número.
+- **`FALHA: sem resposta HTTP`** → a `url` do `[cpe]` está errada ou o CPE está
+  noutro endereço. Confira qual IP responde antes de mexer no regex.
+
+Os dois números juntos é que dizem alguma coisa: RSRP forte com RSRQ ruim é
+enlace com potência sobrando e célula congestionada — o caso que faz a imagem
+chegar devagar sem o CPE nunca dizer "desconectado".
 
 ## Observação sobre a fila do Telegram
 

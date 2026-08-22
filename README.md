@@ -89,7 +89,24 @@ tests/            pytest — roda inteiro sem depender do Porto
 /grafico 106 2h            outra janela
 /grafico 106 frames 12h    outra métrica
 /grafico 2h 106            a ordem dos argumentos não importa
+/grafico rsrp              RSRP do CPE — sem número de câmera
+/grafico rsrq 2h           RSRQ do CPE, outra janela
+/grafico disco             espaço livre no PC do SPA
 /metricas                  o que dá para plotar
+```
+
+`rsrp`, `rsrq` e `disco` **não pertencem a câmera nenhuma** — o rádio lido é o
+do CPE do lado do SPA, e o disco é o do PC. Exigir o número da câmera nelas era
+pedir um dado que não existe, e a resposta virava o texto de ajuda. Se você
+passar um número mesmo assim, ele é ignorado e a legenda diz `cpe`, não `106`:
+carimbar a câmera ali faria parecer o rádio da Rasp.
+
+Enquanto `[cpe] enabled = false` no `config.toml`, esses dois gráficos saem
+vazios **dizendo o porquê** — o coletor está desligado, não é a janela que está
+errada. Para ligar, calibre os regexes contra a página real do CPE:
+
+```powershell
+python -m monitor.cpe --probe
 ```
 
 O gráfico chega com botões de `30min · 1h · 2h · 12h · 24h`; tocar troca a
@@ -136,6 +153,28 @@ força outro na mão.
 `save_every` está declarado em dois lugares — no servidor e no `config.toml` do
 monitor, que multiplica por ele para calcular `frames/min`. Mudar um sem o outro
 deixa a taxa 10× errada em silêncio.
+
+### Por que `frames/min` é medido em 5 minutos, e não entre dois polls
+
+O coletor varre a pasta a cada 10 s. Enquanto a taxa era calculada nesse mesmo
+intervalo, cada arquivo visto valia `save_every × 60 / 10` — **60 f/min na 106**.
+A métrica só conseguia assumir 0, 60, 120 ou 180: não existia valor entre eles.
+Uma câmera entregando 30 f/min de verdade virava uma onda quadrada batendo entre
+0 e 120 a cada dez segundos, com média certa e leitura impossível.
+
+Isso estragava três coisas de uma vez:
+
+- **o gráfico**, que virava um bloco azul sólido de ponta a ponta;
+- **o alerta de degradada**, que exige o valor abaixo do limiar por 600 s
+  *contínuos* — e o contador zerava a cada poll que pegava um arquivo. Uma
+  câmera na metade do normal por uma hora inteira disparava **zero** alertas;
+- **a linha de base**, que é a mediana desses valores. Em horas de entrega mais
+  lenta a mediana era `0`, e `frames < 0,5 × 0` nunca é verdade: nessas horas o
+  alerta estava desligado por construção.
+
+Hoje a taxa é a contagem de arquivos numa janela deslizante de 5 min
+(`RATE_WINDOW_S` em `watcher.py`), o que derruba o degrau de 60 f/min para 2
+f/min. A média não muda — só a variância. Trocar a janela é uma linha.
 
 `cpu`, `temperatura` e `memoria` já estão no registry e respondem *"depende do
 agente da Fase 3"* — o dado é de dentro da Rasp e não existe caminho para ele

@@ -86,3 +86,17 @@ def test_html_mostra_disponibilidade_no_lugar_do_disconnect_cru(tmp_path):
 
     assert "Imagem 24h" in html
     assert "&ge;5min" in html
+
+
+def test_status_traz_rsrq_junto_do_rsrp(tmp_path):
+    """RSRP sozinho engana: potencia forte com qualidade ruim e' o enlace
+    estrangulado, que le como 'sinal otimo' se so o RSRP aparecer."""
+    cfg = load_config(Path("config.example.toml"))
+    s = Store(tmp_path / "p.db")
+    s.add_sample(1_700_000_000.0 - 30, "cpe", "rsrp", -85.0)
+    s.add_sample(1_700_000_000.0 - 30, "cpe", "rsrq", -17.0)
+    st = build_status(s, cfg, 1_700_000_000.0)
+    assert st["rsrp"] == -85.0 and st["rsrq"] == -17.0
+    assert st["cpe_enabled"] is False        # config.example: [cpe] desligado
+    assert "RSRQ" in render_html(st)
+    s.close()

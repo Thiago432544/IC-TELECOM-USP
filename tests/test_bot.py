@@ -149,3 +149,60 @@ def test_status_diz_a_janela_e_o_piso_no_cabecalho(bot):
 
 def test_status_traz_disponibilidade_por_camera(bot):
     assert "imagem 100.0%" in bot.handle("/status", NOW).text
+
+
+# -- metricas que nao sao de camera ------------------------------------------
+
+def test_metrica_do_cpe_dispensa_o_numero_da_camera(bot):
+    """RSRP nao pertence a nenhuma camera: exigir o numero era pedir um dado
+    que nao existe, e a resposta era o texto de ajuda."""
+    r = bot.handle("/grafico rsrp", NOW)
+    assert r.png[:8] == PNG
+    assert "cpe" in r.text.lower()
+    assert not any(c in r.text for c in ("102", "105", "106"))
+
+
+def test_metrica_do_pc_dispensa_o_numero_da_camera(bot):
+    assert bot.handle("/grafico disco", NOW).png[:8] == PNG
+
+
+def test_metrica_do_cpe_com_camera_nao_atribui_o_dado_a_ela(bot):
+    """Quem digita '/grafico 106 rsrp' tem que ver 'cpe', nao '106': o radio
+    lido e' o do CPE do lado do SPA, nao o da Rasp."""
+    r = bot.handle("/grafico 106 rsrp", NOW)
+    assert "cpe" in r.text.lower() and "106" not in r.text.split("\n")[0]
+
+
+def test_botao_de_janela_do_cpe_volta_pelo_callback(bot):
+    r = bot.handle("/grafico rsrq", NOW)
+    dados = [d for _, d in r.buttons]
+    assert "g:cpe:rsrq:3600" in dados
+    assert bot.handle_callback("g:cpe:rsrq:3600", NOW).png[:8] == PNG
+
+
+def test_cpe_desligado_explica_o_motivo_em_vez_de_so_sumir(bot):
+    """config.example.toml tem [cpe] enabled = false - e' o caso real do SPA."""
+    t = bot.handle("/grafico rsrp", NOW).text
+    assert "enabled" in t and "probe" in t
+
+
+def test_grafico_sem_camera_e_sem_metrica_ainda_pede_ajuda(bot):
+    assert bot.handle("/grafico", NOW).png is None
+
+
+def test_metrica_de_camera_sem_camera_continua_pedindo_a_camera(bot):
+    assert bot.handle("/grafico conexao", NOW).png is None
+
+
+def test_status_mostra_rsrp_e_rsrq(bot):
+    bot.store.add_sample(NOW - 30, "cpe", "rsrp", -85.0)
+    bot.store.add_sample(NOW - 30, "cpe", "rsrq", -17.0)
+    t = bot.handle("/status", NOW).text
+    assert "RSRP" in t and "RSRQ" in t
+
+
+def test_status_diz_quando_o_cpe_esta_desligado(bot):
+    """Sem essa linha, /status simplesmente omite o enlace e quem le supoe
+    que esta tudo bem com ele."""
+    t = bot.handle("/status", NOW).text
+    assert "cpe" in t.lower() and "enabled" in t

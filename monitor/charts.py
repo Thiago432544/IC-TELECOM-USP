@@ -9,6 +9,7 @@ import io
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from typing import Optional
 
 import matplotlib
 matplotlib.use("Agg")
@@ -217,23 +218,26 @@ def series_title(origin: str, spec: MetricSpec, window_s: float) -> str:
 
 
 def _render_series(store: Store, origin: str, spec: MetricSpec,
-                   now: float, window_s: float) -> bytes:
+                   now: float, window_s: float,
+                   nota: Optional[str] = None) -> bytes:
     since = now - window_s
     alvo = origin if spec.origin == "camera" else spec.origin
     rows = store.samples(alvo, spec.sample, since, now)
 
     fig, ax = plt.subplots(figsize=(9, 4), dpi=110)
     ax.set_title(series_title(origin, spec, window_s), fontsize=10)
-    ax.set_ylabel(f"{spec.label} ({spec.unit})")
+    # o titulo ja diz a metrica por extenso; repeti-la no eixo so rouba espaco
+    ax.set_ylabel(spec.unit)
     if rows:
         ax.plot([datetime.fromtimestamp(t) for t, _ in rows],
                 [v for _, v in rows], lw=1.6)
         fig.autofmt_xdate()
     else:
-        recado = ("sem dados: depende do agente da Fase 3 nas Rasps"
-                  if spec.phase == 3 else "sem dados nesta janela")
-        ax.text(0.5, 0.5, recado, ha="center", va="center",
-                transform=ax.transAxes, fontsize=11, color="#868e96")
+        recado = nota or ("sem dados: depende do agente da Fase 3 nas Rasps"
+                          if spec.phase == 3 else "sem dados nesta janela")
+        ax.text(0.5, 0.5, _quebra(recado, 52), ha="center",
+                va="center", transform=ax.transAxes, fontsize=11,
+                color="#868e96")
         ax.set_xticks([])
         ax.set_yticks([])
     return _png(fig)
@@ -246,8 +250,22 @@ def _png(fig) -> bytes:
     return buf.getvalue()
 
 
+def _quebra(texto: str, largura: int) -> str:
+    linhas, atual = [], ""
+    for palavra in texto.split():
+        if atual and len(atual) + 1 + len(palavra) > largura:
+            linhas.append(atual)
+            atual = palavra
+        else:
+            atual = f"{atual} {palavra}".strip()
+    if atual:
+        linhas.append(atual)
+    return "\n".join(linhas)
+
+
 def render_metric_chart(store: Store, origin: str, spec: MetricSpec,
-                        now: float, window_s: float, floor_s: float) -> bytes:
+                        now: float, window_s: float, floor_s: float,
+                        nota: Optional[str] = None) -> bytes:
     if spec.kind == "outages":
         return _render_outages(store, origin, now, window_s, floor_s)
-    return _render_series(store, origin, spec, now, window_s)
+    return _render_series(store, origin, spec, now, window_s, nota)

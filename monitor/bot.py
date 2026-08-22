@@ -20,9 +20,14 @@ from monitor.uptime import availability, coverage_gaps, outages
 _HELP = ("Comandos:\n"
          "/status - estado atual das cameras\n"
          "/grafico <camera> [metrica] [janela] - ex.: /grafico 106 conexao 2h\n"
+         "/grafico rsrp | rsrq | disco [janela] - metricas que nao sao de camera\n"
          "/metricas - o que da para plotar")
 
 _FASE3 = "sem dados: depende do agente da Fase 3 nas Rasps"
+_PROBE = "Calibre com: python -m monitor.cpe --probe"
+_CPE_OFF = "sem dados: [cpe] enabled = false no config.toml. " + _PROBE
+_CPE_MUDO = ("sem dados: o CPE nao respondeu, ou rsrp_re/rsrq_re nao casam "
+             "com a pagina. " + _PROBE)
 
 
 @dataclass(frozen=True)
@@ -43,7 +48,9 @@ def _lista_metricas() -> str:
     linhas = ["Metricas (/grafico <camera> <metrica> [janela]):"]
     for m in METRICS:
         marca = "  [Fase 3, ainda sem dados]" if m.phase == 3 else ""
-        linhas.append(f"- {m.key} ({m.label}){marca}")
+        # onde nao ha camera, o numero da camera e' opcional no comando
+        de = "" if m.origin == "camera" else f"  [{m.origin}, sem camera]"
+        linhas.append(f"- {m.key} ({m.label}){de}{marca}")
     linhas.append("Janelas: 30min, 1h, 2h, 12h, 24h, 7d")
     return "\n".join(linhas)
 
@@ -71,7 +78,11 @@ class BotHandler:
             return Reply(_HELP)
         _, cam, metrica, janela = partes
         spec = find_metric(metrica)
-        if cam not in self.cfg.cameras or spec is None or not janela.isdigit():
+        if spec is None or not janela.isdigit():
+            return Reply(_HELP)
+        if cam != self._sujeito(cam, spec):
+            return Reply(_HELP)
+        if spec.origin == "camera" and cam not in self.cfg.cameras:
             return Reply(_HELP)
         return self._desenhar(cam, spec, int(janela), now)
 
@@ -91,30 +102,53 @@ class BotHandler:
                 spec = m
                 continue
             sobra.append(t)
-        if cam is None:
+        # RSRP/RSRQ sao do CPE e o disco e' do PC: nao pertencem a camera
+        # nenhuma, entao exigir o numero era pedir um dado que nao existe.
+        if cam is None and (spec is None or spec.origin == "camera"):
             return Reply(_HELP)
         if sobra:
             return Reply(f"Nao conheco '{sobra[0]}'. Veja /metricas.")
         # Primeira duracao e' a janela; uma segunda force o piso na mao.
         janela = duracoes[0] if duracoes else DEFAULT_WINDOW
         forcado = duracoes[1] if len(duracoes) > 1 else None
-        return self._desenhar(cam, spec or find_metric("conexao"), janela, now,
+        spec = spec or find_metric("conexao")
+        return self._desenhar(self._sujeito(cam, spec), spec, janela, now,
                               forcado)
+
+    def _sujeito(self, cam, spec: MetricSpec) -> str:
+        """De quem e' o dado. RSRP/RSRQ sao do CPE do lado do SPA e o disco e'
+        do PC: carimbar '106' neles faria parecer o radio da Rasp."""
+        return (cam or "") if spec.origin == "camera" else spec.origin
+
+    def _sem_dados(self, alvo: str, spec: MetricSpec, since: float,
+                   now: float) -> Optional[str]:
+        """Por que o grafico saiu vazio. "sem dados" sozinho manda tentar
+        outra janela quando o problema e' o coletor desligado."""
+        if spec.phase == 3:
+            return _FASE3
+        if self.store.samples(alvo, spec.sample, since, now):
+            return None
+        if spec.origin == "cpe":
+            return _CPE_OFF if not self.cfg.cpe.enabled else _CPE_MUDO
+        return None
 
     def _desenhar(self, cam: str, spec: MetricSpec, janela: float, now: float,
                   forcado: Optional[float] = None) -> Reply:
         if forcado is None and self.cfg.charts.outage_min_s:
             forcado = self.cfg.charts.outage_min_s
         piso = outage_floor(janela, forcado)
-        png = render_metric_chart(self.store, cam, spec, now, janela, piso)
-        return Reply(self._legenda(cam, spec, janela, piso, now), png,
+        nota = (None if spec.kind == "outages"
+                else self._sem_dados(cam, spec, now - janela, now))
+        png = render_metric_chart(self.store, cam, spec, now, janela, piso,
+                                  nota)
+        return Reply(self._legenda(cam, spec, janela, piso, now, nota), png,
                      _botoes(cam, spec, janela))
 
     def _legenda(self, cam: str, spec: MetricSpec, janela: float, piso: int,
-                 now: float) -> str:
+                 now: float, nota: Optional[str] = None) -> str:
         if spec.kind != "outages":
-            cabec = f"{cam} · {spec.label} · {label_duration(janela)}"
-            return f"{cabec}\n{_FASE3}" if spec.phase == 3 else cabec
+            cabec = f"{cam} \u00b7 {spec.label} \u00b7 {label_duration(janela)}"
+            return f"{cabec}\n{nota}" if nota else cabec
         since = now - janela
         outs = outages(self.store, cam, since, now, piso)
         gaps = coverage_gaps(self.store, cam, since, now)
@@ -147,6 +181,18 @@ class BotHandler:
                          f'| ult. frame {age} | {fpm}')
         if st["disk_free_gb"] is not None:
             lines.append(f'Disco D: {st["disk_free_gb"]:.0f} GB livres')
+        radio = []
         if st["rsrp"] is not None:
-            lines.append(f'Enlace: RSRP {st["rsrp"]:.0f} dBm')
+            radio.append(f'RSRP {st["rsrp"]:.0f} dBm')
+        if st["rsrq"] is not None:
+            radio.append(f'RSRQ {st["rsrq"]:.0f} dB')
+        if radio:
+            lines.append("Enlace: " + "  ".join(radio))
+        elif not st["cpe_enabled"]:
+            # sem esta linha o /status apenas omite o enlace, e quem le supoe
+            # que ele esta bem - quando na verdade ninguem esta medindo
+            lines.append("Enlace: CPE desligado ([cpe] enabled = false). "
+                         "Calibre com: python -m monitor.cpe --probe")
+        else:
+            lines.append("Enlace: CPE ligado, mas sem leitura de RSRP/RSRQ.")
         return "\n".join(lines)

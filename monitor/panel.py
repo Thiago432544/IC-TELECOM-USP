@@ -43,12 +43,17 @@ def build_status(store: Store, cfg: Config, now: float) -> dict:
         }
     disk = store.last_sample("pc", "disk_free_gb")
     rsrp = store.last_sample("cpe", "rsrp")
+    rsrq = store.last_sample("cpe", "rsrq")
     up = store.last_sample("cpe", "cpe_up")
     return {"cameras": cams,
             "window_s": DEFAULT_WINDOW,
             "outage_floor_s": piso,
             "disk_free_gb": disk[1] if disk else None,
             "rsrp": rsrp[1] if rsrp else None,
+            # RSRP sozinho engana: potencia forte com qualidade ruim e' o
+            # enlace estrangulado, e le como "sinal otimo" sem o RSRQ ao lado
+            "rsrq": rsrq[1] if rsrq else None,
+            "cpe_enabled": cfg.cpe.enabled,
             "cpe_up": bool(up[1]) if up else None}
 
 
@@ -73,6 +78,7 @@ def render_html(status: dict) -> str:
     disk = (f'{status["disk_free_gb"]:.0f} GB'
             if status["disk_free_gb"] is not None else "-")
     rsrp = f'{status["rsrp"]:.0f} dBm' if status["rsrp"] is not None else "-"
+    rsrq = f'{status["rsrq"]:.0f} dB' if status["rsrq"] is not None else "-"
     stamp = time.strftime("%d/%m/%Y %H:%M:%S")
     return f"""<!doctype html><html lang="pt-br"><head><meta charset="utf-8">
 <meta http-equiv="refresh" content="30"><title>Cameras Porto de Santos</title>
@@ -83,7 +89,7 @@ table{{border-collapse:collapse}}td,th{{padding:.5rem 1rem;border-bottom:1px sol
 <th>Intervalos &ge;{piso}</th><th>Desconexoes {janela}</th>
 <th>frames/min</th><th>Ultimo frame</th></tr>
 {''.join(rows)}</table>
-<p>Disco D: {disk} &middot; RSRP: {rsrp} &middot; atualizado {stamp} (recarrega a cada 30s)</p>
+<p>Disco D: {disk} &middot; RSRP: {rsrp} &middot; RSRQ: {rsrq} &middot; atualizado {stamp} (recarrega a cada 30s)</p>
 </body></html>"""
 
 
