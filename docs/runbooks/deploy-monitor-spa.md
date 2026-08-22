@@ -1,6 +1,7 @@
 # Runbook — atualizar o monitor no PC do SPA
 
-Para subir o gráfico de conexão e o `/grafico` com botões (commit `10733f9`).
+Como atualizar o monitor com segurança. Serve para qualquer versão — não
+cita commit, para não envelhecer.
 
 ## 0. O que pode e o que não pode quebrar
 
@@ -80,8 +81,8 @@ git pull
 git log --oneline -3
 ```
 
-O topo tem que ser `10733f9`. O `config.toml` é ignorado pelo git, então o
-`pull` não encosta nele — a cópia é cinto de segurança.
+O topo tem que bater com o `main` do GitHub. O `config.toml` é ignorado pelo
+git, então o `pull` não encosta nele — a cópia é cinto de segurança.
 
 ## 4B. Atualizar (ZIP)
 
@@ -175,7 +176,71 @@ O `CreationDate` do monitor tem que ser de agora. E o servidor de imagens tem
 que continuar lá, com o `CreationDate` **antigo** — se ele mudou, alguma coisa o
 reiniciou e vale olhar o log de conexões.
 
-## 7. Se der errado
+## 7. Tarefa agendada — para o monitor sobreviver a um reboot
+
+Descoberto em 21/08: **o monitor roda de sessão manual.** Não há tarefa
+agendada. Qualquer reboot do Windows, queda de energia ou alguém fechar a
+janela errada, e o monitoramento some — sem avisar ninguém, porque quem
+avisaria era ele.
+
+O `install_monitor_task.ps1` resolve. Como Administrador, **de dentro da pasta
+do clone**:
+
+```powershell
+Set-Location C:\Users\CILIP\Documents\IC-TELECOM-USP
+.\deploy\pc\install_monitor_task.ps1
+```
+
+Ele se recusa a registrar a tarefa se algo estiver errado, em vez de criar uma
+tarefa que falha 999 vezes em silêncio:
+
+- **descobre o Python certo herdando do processo que já roda** — o monitor do
+  SPA usa o Python do Anaconda, que pode não ser o do `PATH`;
+- **prova que esse Python importa o monitor** antes de registrar (`matplotlib`,
+  `requests`);
+- **exige o `config.toml` na pasta** — ele está no `.gitignore`, então um clone
+  novo nasce sem ele;
+- **avisa se já houver monitor no ar**, porque dois processos disputam o
+  `getUpdates` do Telegram e o mesmo SQLite.
+
+Se o Python detectado não for o que você espera, force:
+
+```powershell
+.\deploy\pc\install_monitor_task.ps1 -Python "C:\ProgramData\anaconda3\python.exe"
+```
+
+### Por que a tarefa roda como SYSTEM
+
+Registrada sob um usuário comum, uma tarefa com gatilho *AtStartup* **só
+dispara depois do logon**. O monitor ficaria fora desde o boot até alguém
+entrar na máquina — exatamente a pane que a tarefa deveria evitar. Como SYSTEM
+ela sobe antes de qualquer logon.
+
+Consequência: o processo **não aparece** no Gerenciador de Tarefas da sua
+conta. Confira pelos comandos, não pela interface.
+
+### O script não inicia a tarefa
+
+De propósito. Se o monitor manual ainda estiver no ar, iniciar a tarefa criaria
+dois monitores. A ordem é:
+
+```powershell
+Stop-Process -Id <PID do monitor manual>
+Start-ScheduledTask -TaskName MonitorCamerasPorto
+Get-ScheduledTaskInfo -TaskName MonitorCamerasPorto
+```
+
+`LastTaskResult = 0` e `LastRunTime` de agora. Depois `/metricas` e `/status`
+no Telegram.
+
+### A prova real
+
+Só uma coisa prova que a tarefa funciona: **reiniciar o PC e conferir sem fazer
+logon.** Do seu lado, `/status` no Telegram tem que responder com a máquina
+recém-ligada e ninguém logado nela. Enquanto esse teste não for feito,
+considere a tarefa não verificada.
+
+## 8. Se der errado
 
 ```powershell
 Set-Location "<a pasta>"
