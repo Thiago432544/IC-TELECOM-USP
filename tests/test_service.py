@@ -123,3 +123,16 @@ def test_mensagem_que_nao_e_comando_e_ignorada(tmp_path):
                         time.time()) is False
     assert tg.calls == []
     s.close()
+
+
+def test_alerta_de_degradada_manda_o_grafico_de_frames():
+    """Camera degradada esta conectada. O grafico de conexao mostraria ~100%
+    no ar e contradiria o texto do proprio alerta."""
+    from monitor.service import chart_metric_for
+    assert chart_metric_for("degraded") == "frames"
+
+
+def test_alerta_de_queda_manda_o_grafico_de_conexao():
+    from monitor.service import chart_metric_for
+    for kind in ("down", "group_down", "flapping"):
+        assert chart_metric_for(kind) == "conexao"

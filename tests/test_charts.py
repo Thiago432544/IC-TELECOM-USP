@@ -125,3 +125,19 @@ def test_render_com_store_vazia_devolve_png(tmp_path):
 def test_legenda_sem_cobertura_nao_inventa_porcentagem():
     txt = caption("106", 86400, 300, [], None)
     assert "sem dados" in txt and "%" not in txt
+
+
+def test_titulo_de_metrica_do_cpe_nao_finge_ser_da_camera():
+    """'106 - RSRP' faz parecer que e' o radio da 106. Nao e': o cpe.py le o
+    CPE do lado do SPA, a ponta receptora. Essa e' justamente a confusao que o
+    diario de 20/08 registra como o limite da Fase 2."""
+    from monitor.charts import series_title
+    titulo = series_title("106", find_metric("rsrp"), 86400)
+
+    assert "cpe" in titulo.lower()
+    assert not titulo.startswith("106")
+
+
+def test_titulo_de_metrica_da_camera_usa_a_camera():
+    from monitor.charts import series_title
+    assert series_title("106", find_metric("frames"), 86400).startswith("106")
