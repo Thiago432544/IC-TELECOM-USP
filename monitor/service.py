@@ -51,12 +51,22 @@ def should_send_summary(last_sent_date, now, hour) -> bool:
     return lt.tm_hour >= hour and last_sent_date != today
 
 
-def alert_chart(store: Store, cfg: Config, camera: str, now: float) -> bytes:
-    """Grafico que acompanha um alerta: conexao na janela padrao."""
+def chart_metric_for(kind: str) -> str:
+    """Grafico que casa com o alerta.
+
+    Camera "degradada" esta conectada: mandar a faixa de conexao mostraria
+    ~100% no ar e contradiria o texto do proprio alerta. O que caiu ali foi a
+    taxa de entrega.
+    """
+    return "frames" if kind == "degraded" else "conexao"
+
+
+def alert_chart(store: Store, cfg: Config, camera: str, now: float,
+                kind: str = "down") -> bytes:
     janela = DEFAULT_WINDOW
     piso = outage_floor(janela, cfg.charts.outage_min_s or None)
-    return render_metric_chart(store, camera, find_metric("conexao"), now,
-                               janela, piso)
+    return render_metric_chart(store, camera, find_metric(chart_metric_for(kind)),
+                               now, janela, piso)
 
 
 def route_update(handler, tg, upd: dict, now: float) -> bool:
@@ -150,7 +160,7 @@ def main(config_path: str = "config.toml"):
                 continue
             if a.wants_chart:
                 cam = a.origin if a.origin in cfg.cameras else next(iter(cfg.cameras))
-                tg.send_photo(alert_chart(store, cfg, cam, now), a.text)
+                tg.send_photo(alert_chart(store, cfg, cam, now, a.kind), a.text)
             else:
                 tg.send_text(a.text)
         if should_send_summary(state["summary_date"], now, cfg.summary_hour):

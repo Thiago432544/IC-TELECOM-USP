@@ -3,23 +3,33 @@ from __future__ import annotations
 import time
 
 from monitor.config import Config
+from monitor.metrics import DEFAULT_WINDOW, label_duration, outage_floor
 from monitor.store import Store
+from monitor.uptime import availability, coverage_gaps, outages
 
 
 def build_daily_summary(store: Store, cfg: Config, now: float) -> str:
-    since = now - 86400
-    lines = ["Resumo diario - cameras Porto de Santos", ""]
+    """Mesma contagem do /grafico e do /status - tres textos, um numero.
+
+    Contar DISCONNECT cru aqui daria "106: 276 quedas" enquanto o grafico da
+    mesma camera diria "3 quedas": os dois certos, medindo coisas diferentes,
+    e juntos destruindo a confianca nos dois.
+    """
+    piso = outage_floor(DEFAULT_WINDOW, cfg.charts.outage_min_s or None)
+    since = now - DEFAULT_WINDOW
+    lines = [f"Resumo diario - cameras Porto de Santos "
+             f"({label_duration(DEFAULT_WINDOW)}, quedas >={label_duration(piso)})",
+             ""]
     for cam in sorted(cfg.cameras):
-        n_disc = store.count_events(cam, "DISCONNECT", since)
-        samples = store.samples(cam, "frames_min", since)
-        if samples:
-            avail = 100.0 * sum(1 for _, v in samples if v > 0) / len(samples)
-            avail_s = f"{avail:.0f}% do dia com frames"
-        else:
-            avail_s = "sem dados"
-        worst = _worst_hour(store, cam, since)
-        worst_s = f", pior hora {worst}h" if worst is not None else ""
-        lines.append(f"- {cam}: {n_disc} quedas, {avail_s}{worst_s}")
+        outs = outages(store, cam, since, now, piso)
+        gaps = coverage_gaps(store, cam, since, now)
+        avail = availability(outs, since, now, tuple(gaps))
+        n = len(outs)
+        quedas = "sem quedas" if n == 0 else f"{n} queda{'s' if n > 1 else ''}"
+        no_ar = "sem dados" if avail is None else f"no ar {avail}%"
+        pior = _pior_hora(outs)
+        pior_s = f", pior hora {pior}h" if pior is not None else ""
+        lines.append(f"- {cam}: {quedas}, {no_ar}{pior_s}")
     disk = store.last_sample("pc", "disk_free_gb")
     if disk:
         trend = _disk_trend(store, now)
@@ -28,10 +38,10 @@ def build_daily_summary(store: Store, cfg: Config, now: float) -> str:
     return "\n".join(lines)
 
 
-def _worst_hour(store, cam, since):
-    hours = [time.localtime(e[0]).tm_hour
-             for e in store.events(since, kind="DISCONNECT", origin=cam)]
-    return max(set(hours), key=hours.count) if hours else None
+def _pior_hora(outs):
+    """Hora do dia que concentrou mais quedas - candidata a padrao de mare."""
+    horas = [time.localtime(o.start).tm_hour for o in outs]
+    return max(set(horas), key=horas.count) if horas else None
 
 
 def _disk_trend(store, now):

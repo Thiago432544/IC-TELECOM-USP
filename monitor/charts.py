@@ -143,6 +143,16 @@ def _render_outages(store: Store, camera: str, now: float,
     return _png(fig)
 
 
+def series_title(origin: str, spec: MetricSpec, window_s: float) -> str:
+    """Metrica do CPE ou do PC nao leva o numero da camera no titulo.
+
+    "106 - RSRP" faria parecer o radio da 106; o cpe.py le o CPE do lado do
+    SPA. Confundir os dois e' o erro que o diario de 20/08 registra.
+    """
+    quem = origin if spec.origin == "camera" else spec.origin
+    return f"{quem} - {spec.label} - {label_duration(window_s)}"
+
+
 def _render_series(store: Store, origin: str, spec: MetricSpec,
                    now: float, window_s: float) -> bytes:
     since = now - window_s
@@ -150,8 +160,7 @@ def _render_series(store: Store, origin: str, spec: MetricSpec,
     rows = store.samples(alvo, spec.sample, since, now)
 
     fig, ax = plt.subplots(figsize=(9, 4), dpi=110)
-    ax.set_title(f"{origin} - {spec.label} - {label_duration(window_s)}",
-                 fontsize=10)
+    ax.set_title(series_title(origin, spec, window_s), fontsize=10)
     ax.set_ylabel(f"{spec.label} ({spec.unit})")
     if rows:
         ax.plot([datetime.fromtimestamp(t) for t, _ in rows],

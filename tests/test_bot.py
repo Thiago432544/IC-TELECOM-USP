@@ -128,3 +128,24 @@ def test_resposta_traz_o_motivo_da_maior_queda(tmp_path):
     r = BotHandler(s, cfg).handle("/grafico 106 1h", NOW)
     assert "Header truncado" in r.text
     s.close()
+
+
+def test_status_usa_a_mesma_contagem_do_grafico(bot):
+    """/status dizendo 50 quedas e /grafico dizendo 0 na mesma camera e' o tipo
+    de contradicao que faz a pessoa parar de confiar nos dois."""
+    for i in range(50):
+        bot.store.add_event(NOW - 3000 + i * 30, "102", "DISCONNECT", "Timeout")
+
+    txt = bot.handle("/status", NOW).text
+
+    assert "sem quedas" in txt
+    assert "50" not in txt
+
+
+def test_status_diz_a_janela_e_o_piso_no_cabecalho(bot):
+    txt = bot.handle("/status", NOW).text
+    assert "24h" in txt and ">=5min" in txt
+
+
+def test_status_traz_disponibilidade_por_camera(bot):
+    assert "no ar 100.0%" in bot.handle("/status", NOW).text
