@@ -37,7 +37,8 @@ def build_status(store: Store, cfg: Config, now: float) -> dict:
             "last_frame_age_s": age[1] if age else None,
             "uptime_24h": availability(outs, since, now, tuple(gaps)),
             "outages_24h": len(outs),
-            # cru, so na API: nao aparece em tela para nao brigar com o de cima
+            # agora aparece em tela ao lado de outages_24h: separados e com
+            # nomes distintos, os dois juntos dizem se o enlace cai ou trava
             "disconnects_24h": store.count_events(cam, "DISCONNECT", since),
         }
     disk = store.last_sample("pc", "disk_free_gb")
@@ -62,11 +63,12 @@ def render_html(status: dict) -> str:
         color = _COLORS[c["state"]]
         fpm = f'{c["frames_min"]:.1f}' if c["frames_min"] is not None else "-"
         age = f'{c["last_frame_age_s"]:.0f}s' if c["last_frame_age_s"] is not None else "-"
-        no_ar = ("-" if c["uptime_24h"] is None else f'{c["uptime_24h"]:.1f}%')
+        img = ("-" if c["uptime_24h"] is None else f'{c["uptime_24h"]:.1f}%')
         rows.append(
             f'<tr><td><b>{cam}</b></td>'
             f'<td style="color:{color};font-weight:600">{c["state"]}</td>'
-            f'<td>{no_ar}</td><td>{c["outages_24h"]}</td>'
+            f'<td>{img}</td><td>{c["outages_24h"]}</td>'
+            f'<td>{c["disconnects_24h"]}</td>'
             f'<td>{fpm}</td><td>{age}</td></tr>')
     disk = (f'{status["disk_free_gb"]:.0f} GB'
             if status["disk_free_gb"] is not None else "-")
@@ -77,8 +79,9 @@ def render_html(status: dict) -> str:
 <style>body{{font-family:Segoe UI,sans-serif;margin:2rem;background:#f8f9fa}}
 table{{border-collapse:collapse}}td,th{{padding:.5rem 1rem;border-bottom:1px solid #dee2e6;text-align:left}}</style>
 </head><body><h1>Cameras Porto de Santos</h1>
-<table><tr><th>Camera</th><th>Estado</th><th>No ar {janela}</th>
-<th>Quedas &ge;{piso}</th><th>frames/min</th><th>Ultimo frame</th></tr>
+<table><tr><th>Camera</th><th>Estado</th><th>Imagem {janela}</th>
+<th>Intervalos &ge;{piso}</th><th>Desconexoes {janela}</th>
+<th>frames/min</th><th>Ultimo frame</th></tr>
 {''.join(rows)}</table>
 <p>Disco D: {disk} &middot; RSRP: {rsrp} &middot; atualizado {stamp} (recarrega a cada 30s)</p>
 </body></html>"""

@@ -108,3 +108,16 @@ def availability(outs: list[Outage], since: float, until: float,
         if b > a:
             fora += b - a
     return round(100.0 * (1.0 - fora / conhecido), 1)
+
+
+def disconnect_times(store: Store, camera: str, since: float,
+                     until: float) -> list[float]:
+    """Instantes de DISCONNECT na janela.
+
+    Existe separado de outages() de proposito: desconexao e' evento, queda de
+    imagem e' duracao. Confundir os dois faz "36 intervalos" parecer "36 vezes
+    que o enlace caiu" - o que este projeto ja provou ser falso.
+    """
+    return [ts for ts, _, _, _ in store.events(since, kind="DISCONNECT",
+                                               origin=camera)
+            if ts <= until]

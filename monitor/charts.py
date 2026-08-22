@@ -17,13 +17,15 @@ from matplotlib.patches import Patch
 
 from monitor.metrics import MetricSpec, label_duration
 from monitor.store import Store
-from monitor.uptime import Outage, availability, coverage_gaps, outages
+from monitor.uptime import (Outage, availability, coverage_gaps,
+                            disconnect_times, outages)
 
 DIA = 86400
 
 COR_UP = "#2f9e44"
 COR_DOWN = "#e03131"
 COR_UNK = "#ced4da"
+COR_DISC = "#1864ab"
 
 
 @dataclass(frozen=True)
@@ -61,17 +63,34 @@ def band_rows(since: float, until: float) -> list[BandRow]:
 
 
 def caption(camera: str, window_s: float, floor_s: float,
-            outs: list[Outage], avail: float) -> str:
+            outs: list[Outage], avail, n_disc=None) -> str:
+    """Intervalo sem imagem e desconexao sao numeros diferentes, lado a lado.
+
+    buracos >> desconexoes = enlace estrangulado, entregando devagar.
+    buracos ~= desconexoes = enlace caindo.
+    """
     piso = label_duration(floor_s)
     partes = [f"{camera} · {label_duration(window_s)}",
-              "sem dados" if avail is None else f"no ar {avail}%"]
+              "sem dados" if avail is None else f"imagem {avail}%"]
     if outs:
         n = len(outs)
-        partes.append(f"{n} queda{'s' if n > 1 else ''} >={piso}")
-        partes.append(f"maior {fmt_dur(max(o.duration_s for o in outs))}")
+        partes.append(f"{n} intervalo{'s' if n > 1 else ''} >={piso}")
     else:
-        partes.append(f"sem queda >={piso}")
+        partes.append(f"sem intervalo >={piso}")
+    if n_disc is not None:
+        partes.append(f"{n_disc} desconexao" if n_disc == 1
+                      else f"{n_disc} desconexoes")
+    if outs:
+        partes.append(f"maior {fmt_dur(max(o.duration_s for o in outs))}")
     return "  ·  ".join(partes)
+
+
+def lane_mode(n_disc: int, max_ticks: int = 60) -> str:
+    """Marca individual enquanto da para separar; acima disso, densidade.
+
+    150 marcas numa faixa de 24h viram uma tarja preta que nao informa nada.
+    """
+    return "ticks" if n_disc <= max_ticks else "densidade"
 
 
 def _spans_offset(spans, row: BandRow, since: float, until: float):
@@ -99,11 +118,34 @@ def _eixo_x(ax, since, until, calendario):
                             for p in pos])
 
 
-def _render_outages(store: Store, camera: str, now: float,
-                    window_s: float, floor_s: float) -> bytes:
+def _pista_desconexao(ax, discs, since, until, y, altura):
+    """Desconexao e' evento pontual, entao vive numa pista propria embaixo da
+    faixa - sobreposta a ela, brigaria com o vermelho do intervalo."""
+    if not discs:
+        return
+    xs = [d - since for d in discs]
+    if lane_mode(len(discs)) == "ticks":
+        ax.vlines(xs, y, y + altura, color=COR_DISC, lw=1.4)
+        return
+    # densidade: conta por balde e modula a opacidade, para nunca virar tarja
+    n_bins = 160
+    largura = (until - since) / n_bins
+    contagem = [0] * n_bins
+    for x in xs:
+        contagem[min(n_bins - 1, int(x / largura))] += 1
+    pico = max(contagem)
+    for i, c in enumerate(contagem):
+        if c:
+            ax.broken_barh([(i * largura, largura)], (y, altura),
+                           facecolors=COR_DISC, alpha=0.25 + 0.75 * c / pico)
+
+
+def build_outage_figure(store: Store, camera: str, now: float,
+                        window_s: float, floor_s: float):
     since, until = now - window_s, now
     outs = outages(store, camera, since, until, floor_s)
     gaps = coverage_gaps(store, camera, since, until)
+    discs = disconnect_times(store, camera, since, until)
     avail = availability(outs, since, until, tuple(gaps))
     rows = band_rows(since, until)
     calendario = len(rows) > 1
@@ -113,34 +155,55 @@ def _render_outages(store: Store, camera: str, now: float,
     altura = 0.6
     for i, r in enumerate(rows):
         y = len(rows) - 1 - i
-        base = _spans_offset([(since, until)], r, since, until)
-        ax.broken_barh(base, (y - altura / 2, altura), facecolors=COR_UP)
+        ax.broken_barh(_spans_offset([(since, until)], r, since, until),
+                       (y - altura / 2, altura), facecolors=COR_UP)
         ax.broken_barh(_spans_offset(gaps, r, since, until),
                        (y - altura / 2, altura), facecolors=COR_UNK)
         ax.broken_barh(_spans_offset(alvo, r, since, until),
                        (y - altura / 2, altura), facecolors=COR_DOWN)
 
-    ax.set_ylim(-0.6, len(rows) - 0.4)
     if calendario:
+        # Marca individual nao cabe em varios dias; o numero do dia cabe.
+        ax.set_ylim(-0.6, len(rows) - 0.4)
         ax.set_yticks(range(len(rows)))
         ax.set_yticklabels([r.label for r in reversed(rows)])
+        eixo_dir = ax.twinx()
+        eixo_dir.set_ylim(ax.get_ylim())
+        eixo_dir.set_yticks(range(len(rows)))
+        eixo_dir.set_yticklabels(
+            [str(sum(1 for d in discs if r.start <= d < r.end))
+             for r in reversed(rows)], fontsize=9)
+        eixo_dir.set_ylabel("desconexoes no dia", fontsize=9)
+        for lado in ("top", "right", "left"):
+            eixo_dir.spines[lado].set_visible(False)
+        eixo_dir.tick_params(axis="y", length=0)
     else:
-        ax.set_yticks([])
+        pista_y, pista_h = -0.62, 0.16
+        _pista_desconexao(ax, discs, since, until, pista_y, pista_h)
+        ax.set_ylim(pista_y - 0.18, 0.5)
+        ax.set_yticks([0, pista_y + pista_h / 2])
+        ax.set_yticklabels(["imagem", "desconexao"], fontsize=9)
+
     ax.tick_params(axis="y", length=0)
     for lado in ("top", "right", "left"):
         ax.spines[lado].set_visible(False)
     _eixo_x(ax, since, until, calendario)
-    ax.set_title(f"Camera {camera} - conexao\n"
-                 + caption(camera, window_s, floor_s, outs, avail),
+    ax.set_title("\n".join([f"Camera {camera} - imagem",
+                            caption(camera, window_s, floor_s, outs, avail,
+                                    len(discs))]),
                  fontsize=10)
-    # Legenda em coordenada de figura: ancorada no eixo ela se afasta cada vez
-    # mais conforme o numero de linhas cresce.
-    fig.legend(handles=[Patch(facecolor=COR_UP, label="no ar"),
-                        Patch(facecolor=COR_DOWN, label="fora"),
-                        Patch(facecolor=COR_UNK, label="sem dados")],
-               loc="lower center", ncol=3, frameon=False, fontsize=9)
+    fig.legend(handles=[Patch(facecolor=COR_UP, label="imagem"),
+                        Patch(facecolor=COR_DOWN, label="sem imagem"),
+                        Patch(facecolor=COR_UNK, label="sem dados"),
+                        Patch(facecolor=COR_DISC, label="desconexao")],
+               loc="lower center", ncol=4, frameon=False, fontsize=9)
     fig.subplots_adjust(bottom=0.30 if len(rows) == 1 else 0.14)
-    return _png(fig)
+    return fig
+
+
+def _render_outages(store: Store, camera: str, now: float,
+                    window_s: float, floor_s: float) -> bytes:
+    return _png(build_outage_figure(store, camera, now, window_s, floor_s))
 
 
 def series_title(origin: str, spec: MetricSpec, window_s: float) -> str:

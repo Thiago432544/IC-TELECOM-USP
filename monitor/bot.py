@@ -133,16 +133,17 @@ class BotHandler:
         piso = label_duration(st["outage_floor_s"])
         # Janela e piso no cabecalho, uma vez, em vez de repetidos por linha.
         lines = [f'Estado atual - ultimas {label_duration(st["window_s"])}, '
-                 f'quedas >={piso}:']
+                 f'intervalos sem imagem >={piso}:']
         for cam, c in sorted(st["cameras"].items()):
             fpm = f'{c["frames_min"]:.1f} f/min' if c["frames_min"] is not None else "-"
             age = (f'{c["last_frame_age_s"]:.0f}s'
                    if c["last_frame_age_s"] is not None else "-")
-            no_ar = ("sem dados" if c["uptime_24h"] is None
-                     else f'no ar {c["uptime_24h"]}%')
+            img = ("sem dados" if c["uptime_24h"] is None
+                   else f'imagem {c["uptime_24h"]}%')
             n = c["outages_24h"]
-            quedas = "sem quedas" if n == 0 else f"{n} queda{'s' if n > 1 else ''}"
-            lines.append(f'- {cam} {icon[c["state"]]} | {no_ar} | {quedas} '
+            gaps = ("sem intervalo" if n == 0
+                    else f"{n} intervalo{'s' if n > 1 else ''}")
+            lines.append(f'- {cam} {icon[c["state"]]} | {img} | {gaps} '
                          f'| ult. frame {age} | {fpm}')
         if st["disk_free_gb"] is not None:
             lines.append(f'Disco D: {st["disk_free_gb"]:.0f} GB livres')

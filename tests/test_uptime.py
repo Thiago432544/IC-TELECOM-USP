@@ -157,3 +157,19 @@ def test_disponibilidade_sem_nada_conhecido_e_none(tmp_path):
     """None e' 'nao sei'. 100% seria mentira e 0% tambem."""
     t0 = 1_700_000_000.0
     assert availability([], t0, t0 + 3600, gaps=[(t0, t0 + 3600)]) is None
+
+
+def test_disconnect_times_recorta_a_janela(tmp_path):
+    """A pista de desconexao precisa dos instantes, e store.events nao tem
+    filtro de fim."""
+    from monitor.uptime import disconnect_times
+    s = Store(tmp_path / "m.db")
+    t0 = 1_700_000_000.0
+    s.add_event(t0 - 10, "106", "DISCONNECT", "antes")
+    s.add_event(t0 + 30, "106", "DISCONNECT", "dentro")
+    s.add_event(t0 + 90, "106", "DISCONNECT", "depois")
+    s.add_event(t0 + 30, "102", "DISCONNECT", "outra camera")
+    s.add_event(t0 + 30, "106", "CONNECT", "outro tipo")
+
+    assert disconnect_times(s, "106", t0, t0 + 60) == [t0 + 30]
+    s.close()

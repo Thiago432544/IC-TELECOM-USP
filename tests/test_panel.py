@@ -84,5 +84,5 @@ def test_html_mostra_disponibilidade_no_lugar_do_disconnect_cru(tmp_path):
 
     html = render_html(build_status(s, cfg, now))
 
-    assert "No ar 24h" in html
+    assert "Imagem 24h" in html
     assert "&ge;5min" in html

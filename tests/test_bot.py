@@ -32,7 +32,7 @@ def test_status_continua_listando_as_cameras(bot):
 def test_grafico_sem_argumento_usa_conexao_em_24h(bot):
     r = bot.handle("/grafico 102", NOW)
     assert r.png[:8] == PNG
-    assert "24h" in r.text and "no ar" in r.text
+    assert "24h" in r.text and "imagem" in r.text
 
 
 def test_grafico_aceita_a_janela(bot):
@@ -138,7 +138,7 @@ def test_status_usa_a_mesma_contagem_do_grafico(bot):
 
     txt = bot.handle("/status", NOW).text
 
-    assert "sem quedas" in txt
+    assert "sem intervalo" in txt
     assert "50" not in txt
 
 
@@ -148,4 +148,4 @@ def test_status_diz_a_janela_e_o_piso_no_cabecalho(bot):
 
 
 def test_status_traz_disponibilidade_por_camera(bot):
-    assert "no ar 100.0%" in bot.handle("/status", NOW).text
+    assert "imagem 100.0%" in bot.handle("/status", NOW).text

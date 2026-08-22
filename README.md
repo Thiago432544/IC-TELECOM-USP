@@ -63,7 +63,7 @@ monitor/          o coletor (roda no PC Windows do SPA)
   store.py          SQLite: série temporal + eventos, retenção de 90 dias
   baseline.py       linha de base por câmera e hora do dia (mediana de 7 dias)
   alerts.py         máquina de estados dos alertas, com anti-ruído
-  uptime.py         reconstrói quedas reais a partir da idade do último frame
+  uptime.py         intervalos sem imagem, a partir da idade do último frame
   metrics.py        registry de métricas e o piso de queda por janela
   telegram.py       Bot API + fila em disco para quando a internet cai
   charts.py         faixa de conexão e séries; PNG anexado ao alerta
@@ -95,26 +95,47 @@ tests/            pytest — roda inteiro sem depender do Porto
 O gráfico chega com botões de `30min · 1h · 2h · 12h · 24h`; tocar troca a
 imagem na mesma mensagem em vez de mandar outra.
 
-**O gráfico de conexão não conta frames — conta tempo fora.** Cheio = a câmera
-estava entregando, vazado = estava fora, cinza = o monitor não estava no ar
+**O gráfico mede o registro de imagem, não a conexão.** Cheio = havia imagem
+nova chegando, vazado = não havia, cinza = o monitor não estava no ar
 (ignorância nunca é pintada de verde). Até 24h é uma faixa só; acima disso vira
 uma linha por dia, para comparar o mesmo horário entre dias.
 
-**O piso acompanha o zoom.** Uma queda só entra no gráfico se durar mais que o
-piso da janela — senão os ~276 eventos de instabilidade da 106 voltam a saturar
-o desenho, que era o problema do gráfico de frames/min.
+**As desconexões são uma coisa separada, e aparecem separadas.** Até 24h, numa
+pista própria embaixo da faixa — marcas individuais enquanto der para separar,
+densidade acima disso, porque 150 marcas viram uma tarja preta que não informa
+nada. Acima de 24h a marca não cabe, então cada dia leva o número à direita.
+
+Os dois números lado a lado na legenda respondem a pergunta que importa:
+
+| Leitura | Significado |
+|---|---|
+| intervalos ≫ desconexões | enlace **estrangulado** — conectado, entregando devagar |
+| intervalos ≈ desconexões | enlace **caindo** |
+
+Foi assim que se descobriu que as "36 quedas em uma hora" da 106 conviviam com
+apenas ~6 desconexões: o enlace não estava caindo, estava estrangulado.
+
+**O piso acompanha o zoom.** Um intervalo só entra no gráfico se durar mais que
+o piso da janela — senão as centenas de eventos de instabilidade da 106 voltam a
+saturar o desenho, que era o problema do gráfico de frames/min.
 
 | Janela | Piso | O que você vê |
 |--------|------|---------------|
-| 30min, 1h, 2h | 30 s | cada reconexão |
+| 30min, 1h, 2h | 30 s | cada respiro |
 | 12h | 2 min | interrupção de verdade |
 | 24h | 5 min | interrupção de verdade |
 | 7d | 30 min | só pane |
 
-O piso nunca desce de 30 s: com `save_every = 10` o servidor grava um arquivo a
-cada ~10 s, então a idade do último frame de uma câmera saudável já oscila até
-~10 s. Ele aparece sempre na legenda (`>=5min`), e `/grafico 106 24h 30s` força
-outro na mão.
+O piso nunca desce de 30 s: `save_every` é ajustado para as três câmeras
+gravarem ~1 arquivo a cada 10 s apesar de enviarem em ritmos diferentes (a 105
+monitora particulados, manda menos imagens e maiores; a 102 e a 106 mandam
+muito mais). Então a idade do último arquivo de uma câmera saudável já oscila
+até ~10 s. O piso aparece sempre na legenda (`>=5min`), e `/grafico 106 24h 30s`
+força outro na mão.
+
+`save_every` está declarado em dois lugares — no servidor e no `config.toml` do
+monitor, que multiplica por ele para calcular `frames/min`. Mudar um sem o outro
+deixa a taxa 10× errada em silêncio.
 
 `cpu`, `temperatura` e `memoria` já estão no registry e respondem *"depende do
 agente da Fase 3"* — o dado é de dentro da Rasp e não existe caminho para ele

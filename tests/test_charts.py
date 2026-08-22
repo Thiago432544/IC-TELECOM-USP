@@ -58,15 +58,15 @@ def test_legenda_diz_disponibilidade_quantidade_e_piso():
     txt = caption("106", 86400, 300, outs, 91.4)
 
     assert "106" in txt and "24h" in txt
-    assert "91.4%" in txt
-    assert "2 quedas" in txt
+    assert "imagem 91.4%" in txt
+    assert "2 intervalos" in txt
     assert ">=5min" in txt
     assert "5h21" in txt          # a maior
 
 
 def test_legenda_sem_queda_nao_inventa_maior():
     txt = caption("105", 86400, 300, [], 100.0)
-    assert "sem queda" in txt and "maior" not in txt
+    assert "sem intervalo" in txt and "maior" not in txt
 
 
 def test_render_conexao_devolve_png(tmp_path):
@@ -141,3 +141,103 @@ def test_titulo_de_metrica_do_cpe_nao_finge_ser_da_camera():
 def test_titulo_de_metrica_da_camera_usa_a_camera():
     from monitor.charts import series_title
     assert series_title("106", find_metric("frames"), 86400).startswith("106")
+
+
+def test_legenda_separa_intervalo_sem_imagem_de_desconexao():
+    """36 intervalos e 6 desconexoes na mesma hora: os dois numeros lado a lado
+    sao a diferenca entre 'o enlace cai' e 'o enlace esta estrangulado'."""
+    t = _meio_dia()
+    outs = [Outage(t - 20000, t - 740, 19260, "Timeout")]
+    txt = caption("106", 3600, 30, outs, 9.8, n_disc=6)
+
+    assert "imagem 9.8%" in txt
+    assert "1 intervalo >=30s" in txt
+    assert "6 desconexoes" in txt
+    assert "quedas" not in txt and "no ar" not in txt
+
+
+def test_legenda_no_singular_de_desconexao():
+    assert "1 desconexao" in caption("106", 3600, 30, [], 100.0, n_disc=1)
+
+
+def test_legenda_sem_desconexao_nenhuma_mostra_zero():
+    assert "0 desconexoes" in caption("106", 3600, 30, [], 100.0, n_disc=0)
+
+
+def test_marca_individual_enquanto_da_para_separar():
+    from monitor.charts import lane_mode
+    assert lane_mode(6) == "ticks"
+
+
+def test_muitas_desconexoes_viram_densidade_em_vez_de_borrao():
+    """150 marcas numa faixa de 24h viram uma tarja preta que nao informa nada."""
+    from monitor.charts import lane_mode
+    assert lane_mode(150) == "densidade"
+
+
+def test_render_com_pista_de_desconexao_devolve_png(tmp_path):
+    s = Store(tmp_path / "m.db")
+    t = _meio_dia()
+    for i in range(360):
+        s.add_sample(t - 3600 + i * 10, "106", "last_frame_age_s", 5.0)
+    for i in range(6):
+        s.add_event(t - 3000 + i * 400, "106", "DISCONNECT", "Erro no tamanho")
+
+    png = render_metric_chart(s, "106", find_metric("conexao"), t, 3600, 30)
+    assert png[:8] == PNG
+    s.close()
+
+
+def test_render_em_densidade_devolve_png(tmp_path):
+    s = Store(tmp_path / "m.db")
+    t = _meio_dia()
+    for i in range(8640):
+        s.add_sample(t - 86400 + i * 10, "106", "last_frame_age_s", 5.0)
+    for i in range(150):
+        s.add_event(t - 86000 + i * 570, "106", "DISCONNECT", "Timeout")
+
+    png = render_metric_chart(s, "106", find_metric("conexao"), t, 86400, 300)
+    assert png[:8] == PNG
+    s.close()
+
+
+def _figura(store, camera, now, window_s, floor_s):
+    import matplotlib.pyplot as plt
+    from monitor.charts import build_outage_figure
+    fig = build_outage_figure(store, camera, now, window_s, floor_s)
+    try:
+        ax = fig.axes[0]
+        eixos = [[t.get_text() for t in a.get_yticklabels()] for a in fig.axes]
+        return [t.get_text() for t in ax.get_yticklabels()], eixos
+    finally:
+        plt.close(fig)
+
+
+def test_vista_curta_tem_pista_de_desconexao(tmp_path):
+    s = Store(tmp_path / "m.db")
+    t = _meio_dia()
+    for i in range(360):
+        s.add_sample(t - 3600 + i * 10, "106", "last_frame_age_s", 5.0)
+    s.add_event(t - 1800, "106", "DISCONNECT", "Erro no tamanho")
+
+    labels, _ = _figura(s, "106", t, 3600, 30)
+
+    assert "imagem" in labels
+    assert "desconexao" in labels
+    s.close()
+
+
+def test_calendario_nao_tem_pista_e_traz_a_contagem_por_dia(tmp_path):
+    """Marca individual nao cabe em 7 dias; o numero do dia cabe e informa."""
+    s = Store(tmp_path / "m.db")
+    t = _meio_dia()
+    for i in range(0, 3 * 86400, 300):
+        s.add_sample(t - 3 * 86400 + i, "106", "last_frame_age_s", 5.0)
+    for i in range(5):                        # 5 no penultimo dia
+        s.add_event(t - 86400 - i * 600, "106", "DISCONNECT", "Timeout")
+
+    labels, eixos = _figura(s, "106", t, 3 * 86400, 600)
+
+    assert "desconexao" not in labels
+    assert any("5" in col for col in eixos)   # contagem do dia no eixo direito
+    s.close()

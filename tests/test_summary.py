@@ -22,8 +22,8 @@ def test_resumo_conta_quedas_como_o_grafico(tmp_path):
 
     texto = build_daily_summary(s, cfg, NOW)
 
-    assert "106: sem quedas" in texto
-    assert "50 quedas" not in texto
+    assert "106: sem intervalo" in texto
+    assert "50 intervalos" not in texto
     s.close()
 
 
@@ -32,7 +32,7 @@ def test_resumo_usa_a_mesma_disponibilidade_do_status(tmp_path):
     s = Store(tmp_path / "m.db")
     _saudavel(s, "102", 4)
 
-    assert "no ar 100.0%" in build_daily_summary(s, cfg, NOW)
+    assert "imagem 100.0%" in build_daily_summary(s, cfg, NOW)
     s.close()
 
 

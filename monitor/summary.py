@@ -18,18 +18,20 @@ def build_daily_summary(store: Store, cfg: Config, now: float) -> str:
     piso = outage_floor(DEFAULT_WINDOW, cfg.charts.outage_min_s or None)
     since = now - DEFAULT_WINDOW
     lines = [f"Resumo diario - cameras Porto de Santos "
-             f"({label_duration(DEFAULT_WINDOW)}, quedas >={label_duration(piso)})",
+             f"({label_duration(DEFAULT_WINDOW)}, intervalos sem imagem "
+             f">={label_duration(piso)})",
              ""]
     for cam in sorted(cfg.cameras):
         outs = outages(store, cam, since, now, piso)
         gaps = coverage_gaps(store, cam, since, now)
         avail = availability(outs, since, now, tuple(gaps))
         n = len(outs)
-        quedas = "sem quedas" if n == 0 else f"{n} queda{'s' if n > 1 else ''}"
-        no_ar = "sem dados" if avail is None else f"no ar {avail}%"
+        gaps = ("sem intervalo" if n == 0
+                else f"{n} intervalo{'s' if n > 1 else ''} sem imagem")
+        img = "sem dados" if avail is None else f"imagem {avail}%"
         pior = _pior_hora(outs)
         pior_s = f", pior hora {pior}h" if pior is not None else ""
-        lines.append(f"- {cam}: {quedas}, {no_ar}{pior_s}")
+        lines.append(f"- {cam}: {gaps}, {img}{pior_s}")
     disk = store.last_sample("pc", "disk_free_gb")
     if disk:
         trend = _disk_trend(store, now)
@@ -39,7 +41,7 @@ def build_daily_summary(store: Store, cfg: Config, now: float) -> str:
 
 
 def _pior_hora(outs):
-    """Hora do dia que concentrou mais quedas - candidata a padrao de mare."""
+    """Hora que concentrou mais intervalos sem imagem - candidata a mare."""
     horas = [time.localtime(o.start).tm_hour for o in outs]
     return max(set(horas), key=horas.count) if horas else None
 
