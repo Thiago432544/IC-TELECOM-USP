@@ -5,10 +5,20 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from monitor.config import Config
+from monitor.metrics import DEFAULT_WINDOW, label_duration, outage_floor
 from monitor.store import Store
+from monitor.uptime import availability, coverage_gaps, outages
 
 
 def build_status(store: Store, cfg: Config, now: float) -> dict:
+    """Estado atual + disponibilidade das ultimas 24h.
+
+    As quedas sao contadas como no grafico (tempo fora acima do piso), nao
+    como DISCONNECT no log: a 106 tem centenas de reconexoes curtas, e os dois
+    numeros lado a lado se contradizem aos olhos de quem le.
+    """
+    piso = outage_floor(DEFAULT_WINDOW, cfg.charts.outage_min_s or None)
+    since = now - DEFAULT_WINDOW
     cams = {}
     for cam in cfg.cameras:
         fpm = store.last_sample(cam, "frames_min")
@@ -19,16 +29,23 @@ def build_status(store: Store, cfg: Config, now: float) -> dict:
             state = "atrasada"
         else:
             state = "ok"
+        outs = outages(store, cam, since, now, piso)
+        gaps = coverage_gaps(store, cam, since, now)
         cams[cam] = {
             "state": state,
             "frames_min": fpm[1] if fpm else None,
             "last_frame_age_s": age[1] if age else None,
-            "disconnects_24h": store.count_events(cam, "DISCONNECT", now - 86400),
+            "uptime_24h": availability(outs, since, now, tuple(gaps)),
+            "outages_24h": len(outs),
+            # cru, so na API: nao aparece em tela para nao brigar com o de cima
+            "disconnects_24h": store.count_events(cam, "DISCONNECT", since),
         }
     disk = store.last_sample("pc", "disk_free_gb")
     rsrp = store.last_sample("cpe", "rsrp")
     up = store.last_sample("cpe", "cpe_up")
     return {"cameras": cams,
+            "window_s": DEFAULT_WINDOW,
+            "outage_floor_s": piso,
             "disk_free_gb": disk[1] if disk else None,
             "rsrp": rsrp[1] if rsrp else None,
             "cpe_up": bool(up[1]) if up else None}
@@ -38,15 +55,19 @@ _COLORS = {"ok": "#2f9e44", "atrasada": "#e8590c", "sem_dados": "#868e96"}
 
 
 def render_html(status: dict) -> str:
+    piso = label_duration(status["outage_floor_s"])
+    janela = label_duration(status["window_s"])
     rows = []
     for cam, c in sorted(status["cameras"].items()):
         color = _COLORS[c["state"]]
         fpm = f'{c["frames_min"]:.1f}' if c["frames_min"] is not None else "-"
         age = f'{c["last_frame_age_s"]:.0f}s' if c["last_frame_age_s"] is not None else "-"
+        no_ar = ("-" if c["uptime_24h"] is None else f'{c["uptime_24h"]:.1f}%')
         rows.append(
             f'<tr><td><b>{cam}</b></td>'
             f'<td style="color:{color};font-weight:600">{c["state"]}</td>'
-            f'<td>{fpm}</td><td>{age}</td><td>{c["disconnects_24h"]}</td></tr>')
+            f'<td>{no_ar}</td><td>{c["outages_24h"]}</td>'
+            f'<td>{fpm}</td><td>{age}</td></tr>')
     disk = (f'{status["disk_free_gb"]:.0f} GB'
             if status["disk_free_gb"] is not None else "-")
     rsrp = f'{status["rsrp"]:.0f} dBm' if status["rsrp"] is not None else "-"
@@ -56,7 +77,8 @@ def render_html(status: dict) -> str:
 <style>body{{font-family:Segoe UI,sans-serif;margin:2rem;background:#f8f9fa}}
 table{{border-collapse:collapse}}td,th{{padding:.5rem 1rem;border-bottom:1px solid #dee2e6;text-align:left}}</style>
 </head><body><h1>Cameras Porto de Santos</h1>
-<table><tr><th>Camera</th><th>Estado</th><th>frames/min</th><th>Ultimo frame</th><th>Quedas 24h</th></tr>
+<table><tr><th>Camera</th><th>Estado</th><th>No ar {janela}</th>
+<th>Quedas &ge;{piso}</th><th>frames/min</th><th>Ultimo frame</th></tr>
 {''.join(rows)}</table>
 <p>Disco D: {disk} &middot; RSRP: {rsrp} &middot; atualizado {stamp} (recarrega a cada 30s)</p>
 </body></html>"""

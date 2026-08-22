@@ -130,13 +130,20 @@ class BotHandler:
     def _status(self, now: float) -> str:
         st = build_status(self.store, self.cfg, now)
         icon = {"ok": "OK", "atrasada": "ATRASADA", "sem_dados": "SEM DADOS"}
-        lines = ["Estado atual:"]
+        piso = label_duration(st["outage_floor_s"])
+        # Janela e piso no cabecalho, uma vez, em vez de repetidos por linha.
+        lines = [f'Estado atual - ultimas {label_duration(st["window_s"])}, '
+                 f'quedas >={piso}:']
         for cam, c in sorted(st["cameras"].items()):
             fpm = f'{c["frames_min"]:.1f} f/min' if c["frames_min"] is not None else "-"
-            age = (f'{c["last_frame_age_s"]:.0f}s atras'
+            age = (f'{c["last_frame_age_s"]:.0f}s'
                    if c["last_frame_age_s"] is not None else "-")
-            lines.append(f'- {cam}: {icon[c["state"]]} | {fpm} | ultimo frame {age} '
-                         f'| {c["disconnects_24h"]} quedas 24h')
+            no_ar = ("sem dados" if c["uptime_24h"] is None
+                     else f'no ar {c["uptime_24h"]}%')
+            n = c["outages_24h"]
+            quedas = "sem quedas" if n == 0 else f"{n} queda{'s' if n > 1 else ''}"
+            lines.append(f'- {cam} {icon[c["state"]]} | {no_ar} | {quedas} '
+                         f'| ult. frame {age} | {fpm}')
         if st["disk_free_gb"] is not None:
             lines.append(f'Disco D: {st["disk_free_gb"]:.0f} GB livres')
         if st["rsrp"] is not None:
