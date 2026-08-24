@@ -180,6 +180,26 @@ f/min. A média não muda — só a variância. Trocar a janela é uma linha.
 agente da Fase 3"* — o dado é de dentro da Rasp e não existe caminho para ele
 hoje.
 
+### Por que reiniciar o monitor não infla a contagem de desconexões
+
+O offset do `LOG_connections.txt` vive só na memória do processo
+(`taplog.py`). Todo restart relê o arquivo desde o byte zero — e, enquanto
+`add_event` era um `INSERT` puro, isso reinseria o histórico inteiro: a
+contagem de desconexões saía multiplicada por quantas vezes o monitor já tinha
+subido. Como desconexão é evento e a pista do gráfico mostra exatamente esse
+número, o gráfico mentia proporcionalmente ao número de deploys.
+
+A correção não foi persistir o offset, e sim tornar o evento idempotente:
+índice único em `(ts, origin, kind, detail)` e `INSERT OR IGNORE`. Bancos
+gravados pela versão anterior são limpos na primeira abertura. Com isso a
+releitura inverte de sinal — deixa de duplicar o que já estava gravado e passa
+a **recuperar** o que aconteceu enquanto o monitor esteve fora do ar, que é o
+comportamento que sempre se quis do arquivo truncado ou rotacionado.
+
+O preço é colapsar dois eventos idênticos no mesmo segundo (mesmo cliente,
+mesmo detalhe) num só. Perder essa marca custa menos que inflar todas as
+outras.
+
 ## Princípios de projeto
 
 - **Push, nunca pull.** As Rasps estão atrás do NAT dos próprios CPEs; o PC não

@@ -1,3 +1,4 @@
+import sqlite3
 from monitor.store import Store
 
 def test_samples_roundtrip(tmp_path):
@@ -32,4 +33,33 @@ def test_purge_aggregates_old_samples(tmp_path):
     hourly = s._conn.execute(
         "SELECT n, min, max FROM samples_hourly WHERE origin='102'").fetchall()
     assert hourly == [(10, 0.0, 9.0)]
+    s.close()
+
+def test_evento_repetido_nao_duplica(tmp_path):
+    s = Store(tmp_path / "m.db")
+    for _ in range(3):
+        s.add_event(100.0, "106", "DISCONNECT", "timeout")
+    assert s.count_events("106", "DISCONNECT", since=0) == 1
+    # so' o trio (ts, origin, kind, detail) identico colapsa
+    s.add_event(100.0, "106", "DISCONNECT", "outro motivo")
+    s.add_event(101.0, "106", "DISCONNECT", "timeout")
+    assert s.count_events("106", "DISCONNECT", since=0) == 3
+    s.close()
+
+def test_banco_com_duplicata_antiga_e_limpo_ao_abrir(tmp_path):
+    # banco gravado pela versao sem indice: o mesmo trecho de log entrou 3x
+    db = tmp_path / "m.db"
+    raw = sqlite3.connect(db)
+    raw.execute("CREATE TABLE events(ts REAL, origin TEXT, kind TEXT, detail TEXT)")
+    for _ in range(3):
+        raw.execute("INSERT INTO events VALUES(100.0,'106','DISCONNECT','timeout')")
+    raw.execute("INSERT INTO events VALUES(200.0,'106','CONNECT','')")
+    raw.commit()
+    raw.close()
+
+    s = Store(db)
+    assert s.count_events("106", "DISCONNECT", since=0) == 1
+    assert s.count_events("106", "CONNECT", since=0) == 1
+    s.add_event(100.0, "106", "DISCONNECT", "timeout")
+    assert s.count_events("106", "DISCONNECT", since=0) == 1
     s.close()

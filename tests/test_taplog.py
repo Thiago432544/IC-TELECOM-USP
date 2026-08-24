@@ -1,6 +1,7 @@
 import shutil
 from datetime import datetime
 from pathlib import Path
+from monitor.store import Store
 from monitor.taplog import LogFollower, parse_line
 
 FIX = Path("tests/fixtures/log_connections_sample.txt")
@@ -53,3 +54,28 @@ def test_follower_handles_crlf_like_real_windows_log(tmp_path):
         fh.write("2026-08-19 10:00:09 | CONNECT | client=106 | IP: 192.168.11.106 | total=2\r\n".encode("utf-8"))
     assert f.poll() == 1                      # offset em bytes nao pode drifar
     assert got[1].client == "106"
+
+def test_restart_do_monitor_nao_duplica_o_historico(tmp_path):
+    """O offset vive so em memoria, entao subir de novo rele' o arquivo inteiro.
+
+    Sem idempotencia no store, cada restart multiplicava a contagem de
+    desconexoes - que e' exatamente o numero exibido na pista do grafico.
+    """
+    log = tmp_path / "log.txt"
+    shutil.copy(FIX, log)
+    store = Store(tmp_path / "m.db")
+
+    def grava(ev):
+        store.add_event(ev.ts, ev.client or "server", ev.kind, ev.detail)
+
+    assert LogFollower(log, on_event=grava).poll() == 5
+    antes = store.events(since=0)
+    assert LogFollower(log, on_event=grava).poll() == 5   # restart: rele' tudo
+    assert store.events(since=0) == antes                 # e nao duplica nada
+
+    # o que entrou durante a parada continua sendo recolhido
+    with open(log, "a", encoding="utf-8") as fh:
+        fh.write("2026-08-19 10:07:00 | DISCONNECT | client=105 | [105] x | total=1\n")
+    assert LogFollower(log, on_event=grava).poll() == 6
+    assert len(store.events(since=0)) == len(antes) + 1
+    store.close()

@@ -24,6 +24,7 @@ class Store:
         with self._lock:
             self._conn.execute("PRAGMA journal_mode=WAL")
             self._conn.executescript(_SCHEMA)
+            self._dedup_eventos()
 
     def add_sample(self, ts, origin, metric, value):
         with self._lock:
@@ -31,9 +32,33 @@ class Store:
                                (ts, origin, metric, value))
             self._conn.commit()
 
+    def _dedup_eventos(self):
+        """Torna o evento idempotente, para reler o log nao duplicar historico.
+
+        O offset do taplog vive so em memoria: todo restart relia o
+        LOG_connections.txt desde o byte zero e reinseria o arquivo inteiro,
+        multiplicando a contagem de desconexoes por quantas vezes o monitor ja
+        subiu. Com o indice unico, reler passa a *recuperar* o que aconteceu
+        durante a parada em vez de duplicar o que ja estava gravado.
+
+        O preco e' colapsar dois eventos identicos no mesmo segundo (mesmo
+        cliente, mesmo detalhe) num so. Perder essa marca custa menos que
+        inflar todas as outras.
+        """
+        if self._conn.execute("SELECT 1 FROM sqlite_master WHERE type='index'"
+                              " AND name='ux_events'").fetchone():
+            return
+        # o indice unico nao nasce sobre duplicata: limpa o passado primeiro
+        self._conn.execute(
+            "DELETE FROM events WHERE rowid NOT IN ("
+            " SELECT MIN(rowid) FROM events GROUP BY ts, origin, kind, detail)")
+        self._conn.execute("CREATE UNIQUE INDEX ux_events"
+                           " ON events(ts, origin, kind, detail)")
+        self._conn.commit()
+
     def add_event(self, ts, origin, kind, detail):
         with self._lock:
-            self._conn.execute("INSERT INTO events VALUES(?,?,?,?)",
+            self._conn.execute("INSERT OR IGNORE INTO events VALUES(?,?,?,?)",
                                (ts, origin, kind, detail))
             self._conn.commit()
 
