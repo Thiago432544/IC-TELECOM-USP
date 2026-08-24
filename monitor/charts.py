@@ -16,7 +16,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.patches import Patch
 
-from monitor.metrics import MetricSpec, label_duration
+from monitor.metrics import MetricSpec, fmt_dur, label_duration
 from monitor.store import Store
 from monitor.uptime import (Outage, availability, coverage_gaps,
                             disconnect_times, outages)
@@ -34,19 +34,6 @@ class BandRow:
     label: str
     start: float
     end: float
-
-
-def fmt_dur(s: float) -> str:
-    s = int(s)
-    if s < 60:
-        return f"{s}s"
-    if s < 3600:
-        return f"{s // 60}min"
-    if s < DIA:
-        h, m = divmod(s // 60, 60)
-        return f"{h}h{m:02d}" if m else f"{h}h"
-    d, h = divmod(s // 3600, 24)
-    return f"{d}d{h}h" if h else f"{d}d"
 
 
 def band_rows(since: float, until: float) -> list[BandRow]:

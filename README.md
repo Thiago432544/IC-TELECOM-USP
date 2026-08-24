@@ -21,6 +21,25 @@ encontrou, entre outras coisas, que a câmera 106 caía e reconectava
 
 Contexto completo: [`docs/superpowers/specs/`](docs/superpowers/specs/).
 
+## As três câmeras não são intercambiáveis
+
+| Câmera | CPE | `save_every` | Observação |
+|---|---|---|---|
+| 102 | Elsys | 10 | rádio próprio |
+| 105 | Teltonika | 1 | monitora particulados: manda menos imagens e maiores |
+| 106 | Elsys | 10 | bem mais distante da eNodeB que a 102 |
+
+Cada uma tem **rádio e CPE próprios** — a queda de uma não diz nada sobre as
+outras, e `restart_router()` de uma reinicia só o CPE dela. O `192.168.11.254`
+que aparece como gateway em mais de uma Rasp é endereço de LAN de fábrica, não
+um equipamento compartilhado (MACs distintos, diário de 20/08). Confundir isso
+já custou um diagnóstico errado em 24/08.
+
+O `save_every` iguala a cadência de gravação das três em ~1 arquivo a cada 10 s
+apesar dos ritmos de envio muito diferentes — é por isso que um mesmo piso de
+intervalo serve para as três, e por isso que baixá-lo multiplicaria por 10 o
+disco da câmera que mais envia.
+
 ## Estado
 
 | Fase | O que é | Estado |
@@ -166,8 +185,20 @@ Isso estragava três coisas de uma vez:
 
 - **o gráfico**, que virava um bloco azul sólido de ponta a ponta;
 - **o alerta de degradada**, que exige o valor abaixo do limiar por 600 s
-  *contínuos* — e o contador zerava a cada poll que pegava um arquivo. Uma
-  câmera na metade do normal por uma hora inteira disparava **zero** alertas;
+  *contínuos* — e o contador zerava a cada poll que pegava um arquivo. Na
+  cadência nominal de 10 s, uma câmera na metade do normal por uma hora inteira
+  dispararia **zero** alertas;
+
+  > Ressalva de 24/08: na prática ele disparou várias vezes para a 106, com
+  > valores como 10,0 e 14,0 f/min. Esses números são impossíveis na cadência
+  > nominal — com `save_every = 10`, a taxa antiga era `n × 600 / janela`, então
+  > 10,0 f/min exige uma janela de ~60 s. Ou seja: **o poll estava se
+  > esticando**, e foi esse atraso que devolveu resolução à métrica e deixou o
+  > alerta passar. A inanição é real, mas era intermitente, não absoluta. Falta
+  > medir o intervalo real entre amostras de `frames_min` — se ele varia de 10 s
+  > a 60 s, o `_scan` está caro (ele percorre a pasta do dia inteira, e a da 105
+  > passa de 60 mil arquivos);
+
 - **a linha de base**, que é a mediana desses valores. Em horas de entrega mais
   lenta a mediana era `0`, e `frames < 0,5 × 0` nunca é verdade: nessas horas o
   alerta estava desligado por construção.
@@ -179,6 +210,31 @@ f/min. A média não muda — só a variância. Trocar a janela é uma linha.
 `cpu`, `temperatura` e `memoria` já estão no registry e respondem *"depende do
 agente da Fase 3"* — o dado é de dentro da Rasp e não existe caminho para ele
 hoje.
+
+### Quando o alerta cala, e quando ele insiste
+
+Em 48 h o sistema gerou **140 alertas, ~135 deles da 106** em tempestade:
+`down` → `recovered` → `down` em ciclos de dois minutos, por horas. No meio
+disso, a 102 caiu às 04:37 de 24/08 e **não voltou mais** — e essa mensagem, a
+única que exigia ação, chegou como uma linha entre dezenas. Detecção nunca foi o
+problema; o problema é que o canal ficou inútil de tão cheio.
+
+Duas regras corrigem isso, ambas em `alerts.py`:
+
+- **Flapping cala o par `down`/`recovered` da mesma câmera.** Se a câmera já
+  ultrapassou `flap_count` desconexões na janela, o `flapping` *é* o alerta:
+  trinta `down` depois dele não acrescentam nada. Quando a tempestade passa e a
+  câmera está no ar, sai um `recovered` de encerramento — silêncio sem desfecho
+  seria pior que ruído.
+- **Queda sustentada insiste** a cada `realert_s`, com a duração acumulada
+  (`SEM FRAMES ha 15h05`). Antes, o `down` só disparava na *transição*: uma vez
+  dentro do conjunto `_down`, a câmera nunca mais avisava. Uma queda de 15 horas
+  rendia uma única mensagem, e o silêncio seguinte era indistinguível de
+  problema resolvido.
+
+O `group_down` — duas ou mais câmeras caindo ao mesmo tempo — **não** é calado
+pelo flapping. Simultaneidade entre rádios independentes é diagnóstico próprio
+(enlace, eNodeB), e a tempestade de uma câmera não explica a outra.
 
 ### Por que reiniciar o monitor não infla a contagem de desconexões
 

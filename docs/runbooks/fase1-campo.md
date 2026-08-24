@@ -31,10 +31,20 @@ reversível de forma independente.
      `INTERVAL = 15 if client_id == "105" else 1` → `INTERVAL = 30`
    - **Reiniciar parando e subindo no mesmo comando.** Se o servidor ficar fora
      por mais de ~10 s, o `connect()` da câmera falha, o `main()` do cliente
-     chama `restart_router()` e o CPE 192.168.11.254 reinicia — derrubando a 102
-     e a 106 juntas, com backoff até 1800 s (achado 3.1). Uma queda com o
-     servidor no ar é inofensiva: cai no `except` interno do `capture_and_send()`,
-     que espera 10 s e reconecta sem tocar no CPE.
+     chama `restart_router()` e **cada câmera reinicia o próprio CPE**, com
+     backoff até 1800 s. Uma queda com o servidor no ar é inofensiva: cai no
+     `except` interno do `capture_and_send()`, que espera 10 s e reconecta sem
+     tocar no CPE.
+
+     > Correção de 24/08: este parágrafo dizia que o CPE `192.168.11.254`
+     > reiniciava e derrubava "a 102 e a 106 juntas". **Falso.** Os CPEs são
+     > unidades físicas distintas — `192.168.11.254` é endereço de LAN de
+     > fábrica, que cada um tem sem relação com o outro (MACs
+     > `f8:80:96:05:99:73` e `f8:80:96:06:05:15`, diário de 20/08). A afirmação
+     > antiga sobreviveu aqui depois de já ter sido desmentida no diário, e em
+     > 24/08 levou a um diagnóstico errado em cima de uma queda real da 102.
+     > O risco do restart continua existindo — só que ele atinge as três
+     > câmeras, cada uma pelo seu próprio rádio, em vez de duas pelo mesmo.
      ```powershell
      Stop-Process -Id <pid>; Start-Process "C:\ProgramData\anaconda3\python.exe" -ArgumentList '"C:\Users\CILIP\Documents\2026_02_01_Server_H00.py"'
      ```

@@ -58,3 +58,39 @@ def test_disk_realerts_daily_not_halfhourly():
     assert kinds(e.evaluate(1000, s)) == [("disk", "pc")]
     assert e.evaluate(1000 + 7200, s) == []                   # 2h: nada
     assert kinds(e.evaluate(1000 + 86401, s)) == [("disk", "pc")]
+
+def test_queda_sustentada_reinsiste_e_diz_a_duracao():
+    e = AlertEngine(CFG)
+    assert kinds(e.evaluate(1000, snap({"102": cam(age=200)}))) == [("down", "102")]
+    assert e.evaluate(1000 + 1799, snap({"102": cam(age=2000)})) == []
+    out = e.evaluate(1000 + 1801, snap({"102": cam(age=54000)}))
+    assert kinds(out) == [("down", "102")]
+    assert "15h" in out[0].text          # e nao "900 min"
+
+def test_flapping_cala_o_par_down_recovered():
+    e = AlertEngine(CFG)
+    tempestade = {"106": cam(age=200, disc=12)}
+    assert kinds(e.evaluate(1000, snap(tempestade))) == [("flapping", "106")]
+    assert e.evaluate(1030, snap({"106": cam(age=5, disc=12)})) == []
+    assert e.evaluate(1060, snap(tempestade)) == []
+    # tempestade passou com a camera no ar: um unico encerramento
+    assert kinds(e.evaluate(3000, snap({"106": cam(age=5, disc=0)}))) == [
+        ("recovered", "106")]
+    assert e.evaluate(3030, snap({"106": cam(age=5, disc=0)})) == []
+
+def test_camera_que_fica_fora_depois_da_tempestade_alerta():
+    e = AlertEngine(CFG)
+    assert kinds(e.evaluate(1000, snap({"106": cam(age=200, disc=12)}))) == [
+        ("flapping", "106")]
+    out = e.evaluate(2000, snap({"106": cam(age=1200, disc=0)}))
+    assert kinds(out) == [("down", "106")]
+    assert "20min" in out[0].text
+
+def test_group_down_sobrevive_ao_flapping():
+    # simultaneidade e' diagnostico de enlace; calar por causa da tempestade de
+    # uma das cameras esconderia justamente o evento mais grave
+    e = AlertEngine(CFG)
+    s = snap({"105": cam(age=200, disc=0), "106": cam(age=210, disc=12)})
+    out = e.evaluate(1000, s)
+    assert ("group_down", "*") in kinds(out)
+    assert "105" in out[-1].text and "106" in out[-1].text

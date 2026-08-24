@@ -89,6 +89,21 @@ def label_duration(s: float) -> str:
     return f"{s}s"
 
 
+def fmt_dur(s: float) -> str:
+    """Duracao para leitura humana. Mora aqui, e nao em charts.py, porque
+    alerts.py precisa dela e nao pode arrastar o matplotlib junto."""
+    s = int(s)
+    if s < 60:
+        return f"{s}s"
+    if s < 3600:
+        return f"{s // 60}min"
+    if s < 86400:
+        h, m = divmod(s // 60, 60)
+        return f"{h}h{m:02d}" if m else f"{h}h"
+    d, h = divmod(s // 3600, 24)
+    return f"{d}d{h}h" if h else f"{d}d"
+
+
 def outage_floor(window_s: float, forcado: Optional[float] = None) -> int:
     """Piso de duracao para uma queda contar, dado o zoom.
 

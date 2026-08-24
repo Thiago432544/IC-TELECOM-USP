@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 from monitor.config import AlertCfg
+from monitor.metrics import fmt_dur
 
 
 @dataclass(frozen=True)
@@ -30,10 +31,19 @@ class Alert:
     wants_chart: bool = False
 
 
+def _texto_down(cam: str, age: Optional[float]) -> str:
+    """"869 min" nao se le. Na terceira insistencia de uma queda longa, a
+    duracao e' a unica coisa nova na mensagem - precisa sair legivel."""
+    return f"Camera {cam} SEM FRAMES ha {fmt_dur(age or 0)}."
+
+
 class AlertEngine:
     def __init__(self, cfg: AlertCfg):
         self.cfg = cfg
         self._down: set[str] = set()
+        # cameras cujo down/recovered foi calado pelo flapping - guardadas para
+        # que a estabilizacao ainda renda uma mensagem no fim da tempestade
+        self._mudo: set[str] = set()
         self._deg_since: dict[str, float] = {}
         self._link_bad_since: Optional[float] = None
         self._last_sent: dict[tuple[str, str], float] = {}
@@ -52,21 +62,48 @@ class AlertEngine:
     # -- avaliacao -------------------------------------------------------
     def evaluate(self, now: float, snap: Snapshot) -> list[Alert]:
         out: list[Alert] = []
-        newly_down: list[str] = []
+        # "caiu agora" e "vale avisar" divergem quando o flapping cala alguem:
+        # simultaneidade entre cameras e' diagnostico proprio (enlace/eNodeB) e
+        # nao pode sumir so porque uma delas estava em tempestade.
+        caiu: list[str] = []
+        avisar: list[str] = []
 
         for cam, st in snap.cameras.items():
             age = st.last_frame_age_s
             is_down = age is not None and age >= self.cfg.down_after_s
+            # Enquanto flapa, o par down/recovered se repete a cada 2 min e
+            # afoga tudo: em 48h a 106 rendeu 135 dos 140 alertas, e a 102 que
+            # caiu de vez virou uma linha no meio. O flapping ja e' o alerta.
+            flapando = st.disconnects_15min >= self.cfg.flap_count
 
             if is_down and cam not in self._down:
                 self._down.add(cam)
-                newly_down.append(cam)
+                caiu.append(cam)
+                if flapando:
+                    self._mudo.add(cam)
+                else:
+                    avisar.append(cam)
+            elif is_down and not flapando and self._ok_to_send(now, cam, "down"):
+                # Queda sustentada tem que insistir: sem isto, uma camera fora
+                # ha 15h gera uma unica mensagem, e o silencio depois dela e'
+                # indistinguivel de problema resolvido.
+                out.append(Alert("down", cam, _texto_down(cam, age), True))
             elif not is_down and cam in self._down and age is not None and age < 60:
                 self._down.discard(cam)
                 self._clear(cam, "down")
-                if self._ok_to_send(now, cam, "recovered", interval=1):
+                if flapando:
+                    self._mudo.add(cam)
+                elif self._ok_to_send(now, cam, "recovered", interval=1):
                     out.append(Alert("recovered", cam,
                                      f"Camera {cam} voltou a enviar frames.", False))
+
+            if cam in self._mudo and not is_down and not flapando:
+                # fim da tempestade: quem ficou calado precisa de um encerramento
+                self._mudo.discard(cam)
+                if self._ok_to_send(now, cam, "recovered", interval=1):
+                    out.append(Alert("recovered", cam,
+                                     f"Camera {cam} estabilizou e esta enviando "
+                                     f"frames.", False))
 
             # degradada (nunca junto com down)
             if (not is_down and st.baseline is not None
@@ -89,20 +126,20 @@ class AlertEngine:
                     f"Camera {cam}: {st.disconnects_15min} desconexoes em 15 min.", True))
 
         # down individual ou agrupado
-        if len(newly_down) >= 2:
-            names = ", ".join(sorted(newly_down))
-            for cam in newly_down:
+        if len(caiu) >= 2:
+            names = ", ".join(sorted(caiu))
+            for cam in caiu:
                 self._last_sent[(cam, "down")] = now
+                self._mudo.discard(cam)
             out.append(Alert("group_down", "*",
-                             f"{len(newly_down)} cameras sem frames ao mesmo tempo "
+                             f"{len(caiu)} cameras sem frames ao mesmo tempo "
                              f"({names}) - provavel enlace/eNodeB.", True))
         else:
-            for cam in newly_down:
+            for cam in avisar:
                 if self._ok_to_send(now, cam, "down"):
-                    st = snap.cameras[cam]
-                    age_min = (st.last_frame_age_s or 0) / 60
                     out.append(Alert("down", cam,
-                                     f"Camera {cam} SEM FRAMES ha {age_min:.0f} min.", True))
+                                     _texto_down(cam, snap.cameras[cam].last_frame_age_s),
+                                     True))
 
         # enlace
         bad = ((snap.rsrp is not None and snap.rsrp < self.cfg.link_rsrp_min)
