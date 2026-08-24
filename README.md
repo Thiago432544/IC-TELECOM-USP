@@ -189,15 +189,11 @@ Isso estragava três coisas de uma vez:
   cadência nominal de 10 s, uma câmera na metade do normal por uma hora inteira
   dispararia **zero** alertas;
 
-  > Ressalva de 24/08: na prática ele disparou várias vezes para a 106, com
-  > valores como 10,0 e 14,0 f/min. Esses números são impossíveis na cadência
-  > nominal — com `save_every = 10`, a taxa antiga era `n × 600 / janela`, então
-  > 10,0 f/min exige uma janela de ~60 s. Ou seja: **o poll estava se
-  > esticando**, e foi esse atraso que devolveu resolução à métrica e deixou o
-  > alerta passar. A inanição é real, mas era intermitente, não absoluta. Falta
-  > medir o intervalo real entre amostras de `frames_min` — se ele varia de 10 s
-  > a 60 s, o `_scan` está caro (ele percorre a pasta do dia inteira, e a da 105
-  > passa de 60 mil arquivos);
+  > Como se sabe a data em que isso acabou: os valores de `frames_min` mudam de
+  > granularidade. Antes são múltiplos de 60; depois, múltiplos de 2. O primeiro
+  > valor fora do padrão antigo é `29,997` em **22/08 11:47:29** — sete minutos
+  > depois do commit. Alertas de degradada anteriores a essa marca são suspeitos;
+  > posteriores são medição de verdade.
 
 - **a linha de base**, que é a mediana desses valores. Em horas de entrega mais
   lenta a mediana era `0`, e `frames < 0,5 × 0` nunca é verdade: nessas horas o
@@ -206,6 +202,16 @@ Isso estragava três coisas de uma vez:
 Hoje a taxa é a contagem de arquivos numa janela deslizante de 5 min
 (`RATE_WINDOW_S` em `watcher.py`), o que derruba o degrau de 60 f/min para 2
 f/min. A média não muda — só a variância. Trocar a janela é uma linha.
+
+O poll é regular a ponto de o `span` fechar em 300 s cravados: medidos 17.270
+intervalos em 48 h, **p50 = p90 = p99 = 10,0 s**, e a mediana não varia entre
+as 24 horas do dia. Duas leituras saem daí. A primeira é que o `_scan` não é
+caro, apesar de reestatar a pasta do dia inteira (a da 105 passa de 60 mil
+arquivos) — no Windows o `os.scandir` já traz o `stat` de cada entrada, sem
+syscall extra. A segunda é que, com `span` de 300 s exatos, `frames/min` vira
+`2 × (arquivos em 5 min)`: uma câmera entregando exatamente 6 arquivos/min
+marca 60,0 cravado por horas seguidas. **Muitos valores "redondos" ali indicam
+regularidade, não quantização** — é o contrário do sintoma antigo.
 
 `cpu`, `temperatura` e `memoria` já estão no registry e respondem *"depende do
 agente da Fase 3"* — o dado é de dentro da Rasp e não existe caminho para ele
