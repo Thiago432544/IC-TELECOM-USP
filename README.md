@@ -237,6 +237,14 @@ Duas regras corrigem isso, ambas em `alerts.py`:
   dentro do conjunto `_down`, a câmera nunca mais avisava. Uma queda de 15 horas
   rendia uma única mensagem, e o silêncio seguinte era indistinguível de
   problema resolvido.
+- **A insistência vai muda.** O primeiro `down` notifica; os lembretes de meia
+  em meia hora saem com `disable_notification` e ficam no chat sem vibrar o
+  celular. Insistir não é acordar: quem recebeu o primeiro aviso já sabe da
+  queda, e vibrar a noite inteira por um problema conhecido ensina a ignorar o
+  alerta — aí o próximo, o que importa, também passa batido. O `recovered` e o
+  `group_down` continuam notificando, porque são novidade, não repetição. O
+  silêncio acompanha a mensagem até pela outbox: um lembrete que ficou preso
+  não chega vibrando horas depois.
 
 O `group_down` — duas ou mais câmeras caindo ao mesmo tempo — **não** é calado
 pelo flapping. Simultaneidade entre rádios independentes é diagnóstico próprio

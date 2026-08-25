@@ -86,3 +86,61 @@ def test_edit_photo_que_falha_nao_vai_para_a_outbox(tmp_path):
     tc = TelegramClient(CFG, tmp_path, post=lambda *a, **k: False)
     assert tc.edit_photo("C", 1, b"PNG", "x") is False
     assert not (tmp_path / "outbox.jsonl").exists()
+
+
+def test_texto_silencioso_desliga_a_notificacao(tmp_path):
+    tc, calls = _spy(tmp_path)
+    tc.send_text("lembrete", silent=True)
+    assert calls[0][1]["disable_notification"] == "true"
+
+
+def test_texto_normal_nao_carrega_disable_notification(tmp_path):
+    tc, calls = _spy(tmp_path)
+    tc.send_text("caiu agora")
+    assert "disable_notification" not in calls[0][1]
+
+
+def test_foto_silenciosa_desliga_a_notificacao(tmp_path):
+    tc, calls = _spy(tmp_path)
+    tc.send_photo(b"PNG", "grafico", silent=True)
+    assert calls[0][1]["disable_notification"] == "true"
+
+
+def test_foto_silenciosa_que_falha_cai_para_texto_ainda_calado(tmp_path):
+    """O lembrete de queda vai com grafico: se a foto falha, o texto que entra
+    no lugar dela nao pode chegar vibrando."""
+    calls = []
+
+    def post(url, data, files=None):
+        calls.append((url, data))
+        return "sendPhoto" not in url
+
+    tc = TelegramClient(CFG, tmp_path, post=post)
+    tc.send_photo(b"PNG", "grafico", silent=True)
+    url, data = calls[-1]
+    assert "sendMessage" in url and data["disable_notification"] == "true"
+
+
+def test_silencio_sobrevive_a_outbox(tmp_path):
+    """Lembrete calado que ficou preso nao pode acordar ninguem horas depois."""
+    ok = {"v": False}
+    calls = []
+
+    def post(url, data, files=None):
+        calls.append(data)
+        return ok["v"]
+
+    tc = TelegramClient(CFG, tmp_path, post=post)
+    assert tc.send_text("lembrete", silent=True) is False
+    ok["v"] = True
+    assert tc.flush_outbox() == 1
+    assert calls[-1]["disable_notification"] == "true"
+
+
+def test_outbox_gravada_antes_da_mudanca_ainda_sai(tmp_path):
+    """A outbox no PC do SPA pode ter linhas sem a chave: barulhentas, como eram."""
+    (tmp_path / "outbox.jsonl").write_text(
+        json.dumps({"ts": 1000.0, "text": "de antes"}), encoding="utf-8")
+    tc, calls = _spy(tmp_path)
+    assert tc.flush_outbox() == 1
+    assert "disable_notification" not in calls[0][1]

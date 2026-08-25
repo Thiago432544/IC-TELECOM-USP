@@ -94,3 +94,29 @@ def test_group_down_sobrevive_ao_flapping():
     out = e.evaluate(1000, s)
     assert ("group_down", "*") in kinds(out)
     assert "105" in out[-1].text and "106" in out[-1].text
+
+
+def test_o_primeiro_down_notifica_e_os_lembretes_vao_calados():
+    """Insistir nao e' acordar: quem ja recebeu o primeiro aviso nao precisa do
+    celular vibrando de meia em meia hora a noite inteira."""
+    e = AlertEngine(CFG)
+    primeiro = e.evaluate(1000, snap({"102": cam(age=200)}))
+    assert kinds(primeiro) == [("down", "102")]
+    assert primeiro[0].silent is False
+
+    lembrete = e.evaluate(1000 + 1801, snap({"102": cam(age=2000)}))
+    assert kinds(lembrete) == [("down", "102")]
+    assert lembrete[0].silent is True
+
+    # a volta e' novidade, nao lembrete: essa notifica
+    volta = e.evaluate(1000 + 1900, snap({"102": cam(age=5)}))
+    assert kinds(volta) == [("recovered", "102")]
+    assert volta[0].silent is False
+
+
+def test_queda_simultanea_notifica_mesmo_sendo_repeticao_de_um_lembrete():
+    """Duas cameras juntas e' diagnostico de enlace - nunca vai calado."""
+    e = AlertEngine(CFG)
+    out = e.evaluate(1000, snap({"102": cam(age=200), "106": cam(age=210)}))
+    assert kinds(out) == [("group_down", "*")]
+    assert out[0].silent is False

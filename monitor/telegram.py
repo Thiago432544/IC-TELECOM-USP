@@ -26,6 +26,17 @@ def _foto(png: bytes) -> dict:
     return {"photo": ("chart.png", png, "image/png")}
 
 
+def _silencio(data: dict, silent: bool) -> dict:
+    """disable_notification: a mensagem entra no chat sem vibrar o celular.
+
+    So entra no payload quando pedido - a Bot API trata ausente como false, e
+    carregar um "false" em toda mensagem so atrapalha na hora de ler o log.
+    """
+    if silent:
+        data["disable_notification"] = "true"
+    return data
+
+
 class TelegramClient:
     def __init__(self, cfg: TelegramCfg, data_dir: Path,
                  post: Optional[Callable] = None):
@@ -37,22 +48,27 @@ class TelegramClient:
     def _api(self, method: str) -> str:
         return f"https://api.telegram.org/bot{self.cfg.token}/{method}"
 
-    def send_text(self, text: str) -> bool:
+    def send_text(self, text: str, silent: bool = False) -> bool:
         ok = self._post(self._api("sendMessage"),
-                        {"chat_id": self.cfg.chat_id, "text": text})
+                        _silencio({"chat_id": self.cfg.chat_id, "text": text},
+                                  silent))
         if not ok:
             with open(self._outbox, "a", encoding="utf-8") as f:
-                f.write(json.dumps({"ts": time.time(), "text": text}) + "\n")
+                f.write(json.dumps({"ts": time.time(), "text": text,
+                                    "silent": silent}) + "\n")
         return ok
 
-    def send_photo(self, png: bytes, caption: str, buttons=None) -> bool:
-        data = {"chat_id": self.cfg.chat_id, "caption": caption}
+    def send_photo(self, png: bytes, caption: str, buttons=None,
+                   silent: bool = False) -> bool:
+        data = _silencio({"chat_id": self.cfg.chat_id, "caption": caption},
+                         silent)
         if buttons:
             data["reply_markup"] = _markup(buttons)
         ok = self._post(self._api("sendPhoto"), data,
                         files=_foto(png))
         if not ok:
-            self.send_text(caption + " [grafico indisponivel na hora do envio]")
+            self.send_text(caption + " [grafico indisponivel na hora do envio]",
+                           silent=silent)
         return ok
 
     def edit_photo(self, chat_id, message_id, png: bytes, caption: str,
@@ -83,9 +99,12 @@ class TelegramClient:
         for line in lines:
             msg = json.loads(line)
             stamp = time.strftime("%d/%m %H:%M", time.localtime(msg["ts"]))
+            # linha antiga da outbox nao tem a chave: sai barulhenta, como era
             if self._post(self._api("sendMessage"),
-                          {"chat_id": self.cfg.chat_id,
-                           "text": f"[atrasada, de {stamp}] {msg['text']}"}):
+                          _silencio({"chat_id": self.cfg.chat_id,
+                                     "text": f"[atrasada, de {stamp}] "
+                                             f"{msg['text']}"},
+                                    msg.get("silent", False))):
                 sent += 1
             else:
                 rest.append(line)

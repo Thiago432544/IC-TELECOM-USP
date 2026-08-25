@@ -29,6 +29,8 @@ class Alert:
     origin: str
     text: str
     wants_chart: bool = False
+    # entra no chat sem notificar o celular
+    silent: bool = False
 
 
 def _texto_down(cam: str, age: Optional[float]) -> str:
@@ -87,7 +89,14 @@ class AlertEngine:
                 # Queda sustentada tem que insistir: sem isto, uma camera fora
                 # ha 15h gera uma unica mensagem, e o silencio depois dela e'
                 # indistinguivel de problema resolvido.
-                out.append(Alert("down", cam, _texto_down(cam, age), True))
+                #
+                # Insistir, porem, nao e' acordar. Quem recebeu o primeiro
+                # aviso ja sabe da queda; vibrar de meia em meia hora a noite
+                # inteira so ensina a ignorar o alerta - e ai o proximo, o que
+                # importa, tambem passa batido. O lembrete fica no chat, mudo,
+                # para quem for olhar. So o primeiro down notifica.
+                out.append(Alert("down", cam, _texto_down(cam, age), True,
+                                 silent=True))
             elif not is_down and cam in self._down and age is not None and age < 60:
                 self._down.discard(cam)
                 self._clear(cam, "down")

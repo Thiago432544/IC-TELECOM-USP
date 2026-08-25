@@ -160,9 +160,10 @@ def main(config_path: str = "config.toml"):
                 continue
             if a.wants_chart:
                 cam = a.origin if a.origin in cfg.cameras else next(iter(cfg.cameras))
-                tg.send_photo(alert_chart(store, cfg, cam, now, a.kind), a.text)
+                tg.send_photo(alert_chart(store, cfg, cam, now, a.kind), a.text,
+                              silent=a.silent)
             else:
-                tg.send_text(a.text)
+                tg.send_text(a.text, silent=a.silent)
         if should_send_summary(state["summary_date"], now, cfg.summary_hour):
             state["summary_date"] = time.strftime("%Y-%m-%d", time.localtime(now))
             if tg:

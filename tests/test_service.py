@@ -34,11 +34,11 @@ class _FakeTg:
     def __init__(self):
         self.calls = []
 
-    def send_text(self, text):
+    def send_text(self, text, silent=False):
         self.calls.append(("send_text", text))
         return True
 
-    def send_photo(self, png, caption, buttons=None):
+    def send_photo(self, png, caption, buttons=None, silent=False):
         self.calls.append(("send_photo", caption, buttons))
         return True
 
