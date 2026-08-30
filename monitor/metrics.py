@@ -49,6 +49,15 @@ METRICS: tuple[MetricSpec, ...] = (
                "rsrq", 2, ()),
     MetricSpec("disco", "espaco livre", "GB", "series", "pc",
                "disk_free_gb", 2, ("disk", "hd")),
+    # Radio do CPE da propria camera. Nome com sufixo de proposito: rsrp sem
+    # sufixo e' o do CPE do lado do SPA, que mede outra ponta do enlace, e
+    # confundir os dois ja custou um diagnostico errado neste projeto.
+    MetricSpec("rsrp_cam", "RSRP do radio da camera", "dBm", "series", "camera",
+               "rsrp_cam", 2, ("potencia", "rsrp-camera")),
+    MetricSpec("rsrq_cam", "RSRQ do radio da camera", "dB", "series", "camera",
+               "rsrq_cam", 2, ("qualidade", "rsrq-camera")),
+    MetricSpec("sinr", "SINR do radio da camera", "dB", "series", "camera",
+               "sinr", 2, ("ruido",)),
     MetricSpec("cpu", "uso de CPU", "%", "series", "camera",
                "cpu_pct", 3, ("carga", "load")),
     MetricSpec("temperatura", "temperatura do SoC", "C", "series", "camera",

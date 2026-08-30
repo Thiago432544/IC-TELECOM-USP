@@ -1,7 +1,7 @@
 """Carrega config.toml em dataclasses tipadas."""
 from __future__ import annotations
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 
@@ -45,6 +45,22 @@ class AlertCfg:
     link_after_s: int
 
 @dataclass(frozen=True)
+class RadioCfg:
+    """Radio do CPE de cada camera, lido por SSH ate a Rasp.
+
+    O PC nao alcanca 192.168.11.1 - e' a LAN atras do radio. Quem fala com o
+    CPE e' o coletor que roda na Pi; o monitor so le o CSV que ele mantem.
+    """
+    enabled: bool = False
+    interval_s: int = 60
+    ssh_user: str = "pi"
+    csv: str = "/home/pi/Desktop/Porto_de_Santos_2025/PRINCIPAL/radio.csv"
+    # Amostra mais velha que isto nao entra: coletor parado mostrando numero de
+    # ontem e' pior que numero nenhum.
+    max_atraso_s: int = 600
+    cameras: dict[str, str] = field(default_factory=dict)
+
+@dataclass(frozen=True)
 class ChartsCfg:
     outage_min_s: int = 0        # 0 = piso automatico, derivado da janela
 
@@ -61,6 +77,7 @@ class Config:
     alerts: AlertCfg
     panel: PanelCfg
     charts: ChartsCfg
+    radio: RadioCfg
     summary_hour: int
 
 
@@ -73,7 +90,9 @@ def load_config(path: Path) -> Config:
         cpe=CpeCfg(**raw["cpe"]),
         alerts=AlertCfg(**raw["alerts"]),
         panel=PanelCfg(**raw["panel"]),
-        # .get: o config.toml que ja roda no PC do SPA nao tem [charts]
+        # .get: o config.toml que ja roda no PC do SPA nao tem [charts] nem
+        # [radio]. Exigir a secao faria o monitor nao subir no proximo restart.
         charts=ChartsCfg(**raw.get("charts", {})),
+        radio=RadioCfg(**raw.get("radio", {})),
         summary_hour=raw["summary_hour"],
     )

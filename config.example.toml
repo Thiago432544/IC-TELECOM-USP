@@ -42,5 +42,21 @@ link_after_s = 300
 [charts]
 outage_min_s = 0    # 0 = piso automatico pela janela (30min->30s, 24h->5min)
 
+[radio]
+# RSRP/RSRQ/SINR do CPE de cada camera. O PC nao alcanca a LAN do radio
+# (192.168.11.x): quem le o CPE e' o deploy/rasp/radio_log.py, que roda na Rasp
+# por cron; o monitor so busca a ultima linha do CSV dele, por SSH.
+# Precisa de chave SSH do PC para a Rasp - com BatchMode, sem chave nao ha
+# leitura e o /status diz isso, em vez de pendurar pedindo senha.
+enabled = false
+interval_s = 60
+ssh_user = "pi"
+csv = "/home/pi/Desktop/Porto_de_Santos_2025/PRINCIPAL/radio.csv"
+max_atraso_s = 600          # amostra mais velha que isto nao entra
+
+[radio.cameras]
+# camera = host que o PC alcanca (nao o IP interno do radio)
+105 = "192.168.10.105"
+
 [panel]
 port = 8080

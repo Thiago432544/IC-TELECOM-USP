@@ -179,6 +179,14 @@ class BotHandler:
                     else f"{n} intervalo{'s' if n > 1 else ''}")
             lines.append(f'- {cam} {icon[c["state"]]} | {img} | {gaps} '
                          f'| ult. frame {age} | {fpm}')
+            # Numa linha propria: a da camera ja e' longa demais para celular,
+            # e o radio e' de outra natureza - e' o enlace, nao a entrega.
+            r = c.get("radio")
+            if r:
+                partes = [f'RSRP {r["rsrp"]:.0f} dBm' if r["rsrp"] is not None else None,
+                          f'RSRQ {r["rsrq"]:.0f} dB' if r["rsrq"] is not None else None,
+                          f'SINR {r["sinr"]:.0f}' if r["sinr"] is not None else None]
+                lines.append("     radio: " + "  ".join(p for p in partes if p))
         if st["disk_free_gb"] is not None:
             lines.append(f'Disco D: {st["disk_free_gb"]:.0f} GB livres')
         radio = []

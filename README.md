@@ -108,8 +108,10 @@ tests/            pytest — roda inteiro sem depender do Porto
 /grafico 106 2h            outra janela
 /grafico 106 frames 12h    outra métrica
 /grafico 2h 106            a ordem dos argumentos não importa
-/grafico rsrp              RSRP do CPE — sem número de câmera
-/grafico rsrq 2h           RSRQ do CPE, outra janela
+/grafico 105 rsrp_cam      RSRP do rádio da própria câmera
+/grafico 105 potencia 12h  o mesmo, por apelido e noutra janela
+/grafico rsrp              RSRP do CPE do SPA — sem número de câmera
+/grafico rsrq 2h           RSRQ do CPE do SPA, outra janela
 /grafico disco             espaço livre no PC do SPA
 /metricas                  o que dá para plotar
 ```
@@ -119,6 +121,18 @@ do CPE do lado do SPA, e o disco é o do PC. Exigir o número da câmera nelas e
 pedir um dado que não existe, e a resposta virava o texto de ajuda. Se você
 passar um número mesmo assim, ele é ignorado e a legenda diz `cpe`, não `106`:
 carimbar a câmera ali faria parecer o rádio da Rasp.
+
+**`rsrp_cam` e `rsrp` medem pontas diferentes do mesmo enlace.** O primeiro é o
+rádio da própria câmera, lido de dentro da Rasp; o segundo é o CPE do lado do
+SPA. O sufixo existe porque confundir as duas pontas já custou um diagnóstico
+errado aqui. O `/status` mostra o da câmera numa linha própria, quando há
+leitura recente.
+
+O caminho do dado da câmera tem uma volta: **o PC não alcança o `192.168.11.1`**,
+que é a LAN atrás do rádio. Quem fala com o CPE é o `deploy/rasp/radio_log.py`,
+que roda na Rasp por cron e mantém um CSV; o monitor só busca a última linha
+dele por SSH, e precisa de chave. Sem chave não há leitura, e o `/status` diz
+isso — em vez de pendurar pedindo senha.
 
 Enquanto `[cpe] enabled = false` no `config.toml`, esses dois gráficos saem
 vazios **dizendo o porquê** — o coletor está desligado, não é a janela que está

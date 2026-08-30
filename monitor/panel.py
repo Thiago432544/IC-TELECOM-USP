@@ -40,6 +40,8 @@ def build_status(store: Store, cfg: Config, now: float) -> dict:
             # agora aparece em tela ao lado de outages_24h: separados e com
             # nomes distintos, os dois juntos dizem se o enlace cai ou trava
             "disconnects_24h": store.count_events(cam, "DISCONNECT", since),
+            # radio do CPE da propria camera; None quando a leitura envelheceu
+            "radio": _radio_recente(store, cam, cfg, now),
         }
     disk = store.last_sample("pc", "disk_free_gb")
     rsrp = store.last_sample("cpe", "rsrp")
@@ -55,6 +57,21 @@ def build_status(store: Store, cfg: Config, now: float) -> dict:
             "rsrq": rsrq[1] if rsrq else None,
             "cpe_enabled": cfg.cpe.enabled,
             "cpe_up": bool(up[1]) if up else None}
+
+
+def _radio_recente(store: Store, cam: str, cfg: Config, now: float):
+    """RSRP/RSRQ/SINR da camera, so se a leitura ainda vale.
+
+    Sem o corte de idade, um coletor parado na Pi manteria o ultimo numero em
+    tela para sempre - e quem le suporia que o radio esta sendo medido.
+    """
+    fresco = cfg.radio.interval_s * 3
+    out = {}
+    for chave, metrica in (("rsrp", "rsrp_cam"), ("rsrq", "rsrq_cam"),
+                           ("sinr", "sinr")):
+        r = store.last_sample(cam, metrica)
+        out[chave] = r[1] if r and now - r[0] < fresco else None
+    return out if any(v is not None for v in out.values()) else None
 
 
 _COLORS = {"ok": "#2f9e44", "atrasada": "#e8590c", "sem_dados": "#868e96"}

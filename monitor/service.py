@@ -13,6 +13,7 @@ from monitor.config import Config, load_config
 from monitor.metrics import DEFAULT_WINDOW, find_metric, outage_floor
 from monitor.cpe import CpeScraper
 from monitor.panel import run_panel
+from monitor.radio import RadioReader
 from monitor.store import Store
 from monitor.summary import build_daily_summary
 from monitor.taplog import LogFollower
@@ -125,6 +126,7 @@ def main(config_path: str = "config.toml"):
         ev.ts, ev.client or "server", ev.kind, ev.detail))
     scraper = CpeScraper(cfg.cpe) if cfg.cpe.enabled else None
     handler = BotHandler(store, cfg)
+    radios = RadioReader(cfg.radio) if cfg.radio.enabled else None
     state = {"summary_date": None, "last_purge": 0.0, "bot_offset": 0}
 
     def watch():
@@ -148,6 +150,20 @@ def main(config_path: str = "config.toml"):
                 store.add_sample(now, "cpe", "rsrp", r.rsrp)
             if r.rsrq is not None:
                 store.add_sample(now, "cpe", "rsrq", r.rsrq)
+
+    def radio():
+        """Le o CPE de cada camera pela Rasp dela. Falta de leitura nao e' erro:
+        sem chave SSH, sem rede ou com a Pi fora, simplesmente nao ha amostra."""
+        now = time.time()
+        for cam, host in cfg.radio.cameras.items():
+            leitura = radios.ler(host, now)
+            if leitura is None:
+                continue
+            for metrica, valor in (("rsrp_cam", leitura.rsrp),
+                                   ("rsrq_cam", leitura.rsrq),
+                                   ("sinr", leitura.sinr)):
+                if valor is not None:
+                    store.add_sample(now, cam, metrica, valor)
 
     def alerts():
         now = time.time()
@@ -182,6 +198,8 @@ def main(config_path: str = "config.toml"):
     _forever(store, "disk", disk, 60)
     if scraper:
         _forever(store, "cpe", cpe, cfg.cpe.interval_s)
+    if radios and cfg.radio.cameras:
+        _forever(store, "radio", radio, cfg.radio.interval_s)
     _forever(store, "alerts", alerts, 30)
     if tg:
         _forever(store, "outbox", tg.flush_outbox, 60)
