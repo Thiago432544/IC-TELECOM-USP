@@ -65,6 +65,16 @@ Rasp COW/eNodeB (ponte, Starlink)                                    PC Windows 
                                                                      192.168.124.29 (internet)
 ```
 
+> **Correção de 01/09/2026 — o "8 km" acima está errado.** A foto de satélite
+> em `docs/evidencias/2026-09-01-mapa-cameras-enodeb-spa.png` mostra as três
+> câmeras, a eNodeB e o SPA dentro de ~1 km: a **105 a dezenas de metros da
+> eNodeB** (o que explica o RSRP saturado em −45 dBm medido em 28/08 — a 8 km
+> esse valor seria impossível), a 102 a ~200 m no cais, a 106 a ~600 m em
+> Outeirinhos com o caminho ao longo do berço, e o SPA com o CPE `.101` a
+> ~400 m. A eNodeB fica junto aos silos, **separada** do CPE `.101` — o
+> diagrama acima nunca lhe deu posição nem endereço. Não se sabe de onde veio
+> o 8 km. Detalhes no diário de 01/09.
+
 - Clientes discam para `192.168.10.101:55000` (WAN do CPE do SPA), que
   encaminha para o PC `192.168.11.101:55000`.
 - Cada Rasp enxerga apenas seu próprio CPE; não há visibilidade lateral.
