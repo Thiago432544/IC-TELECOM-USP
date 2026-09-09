@@ -46,6 +46,32 @@ def build_snapshot(store: Store, cfg: Config, now: float,
     )
 
 
+def record_samples(store: Store, amostras, now: float) -> None:
+    """Grava o que o watcher mediu, costurando a idade quando ele perde a camera.
+
+    O watcher varre so as pastas de hoje e de ontem: passados dois dias sem
+    frame ele devolve `None`, e gravar nada deixava a serie vazia. Sem serie o
+    /status congela no ultimo numero - a 102 disse "ha 1d19h" por duas semanas -
+    e o coverage_gaps() le a janela inteira como "sem cobertura", ou seja, uma
+    queda conhecida vira ignorancia.
+
+    O instante do ultimo frame nao se perde: a amostra guarda a idade que tinha
+    quando foi escrita, entao `ts - valor` e' esse instante, e a idade de agora
+    sai dele. Sem amostra anterior nao ha o que costurar, e ai "sem dados" e' a
+    resposta honesta - a camera nunca entregou frame nenhum.
+    """
+    for s in amostras:
+        if s.frames_per_min is not None:
+            store.add_sample(now, s.camera, "frames_min", s.frames_per_min)
+        idade = s.last_frame_age_s
+        if idade is None:
+            ult = store.last_sample(s.camera, "last_frame_age_s")
+            if ult:
+                idade = now - (ult[0] - ult[1])
+        if idade is not None:
+            store.add_sample(now, s.camera, "last_frame_age_s", idade)
+
+
 def should_send_summary(last_sent_date, now, hour) -> bool:
     lt = time.localtime(now)
     today = time.strftime("%Y-%m-%d", lt)
@@ -131,11 +157,7 @@ def main(config_path: str = "config.toml"):
 
     def watch():
         now = time.time()
-        for s in watcher.poll(now):
-            if s.frames_per_min is not None:
-                store.add_sample(now, s.camera, "frames_min", s.frames_per_min)
-            if s.last_frame_age_s is not None:
-                store.add_sample(now, s.camera, "last_frame_age_s", s.last_frame_age_s)
+        record_samples(store, watcher.poll(now), now)
 
     def disk():
         free_gb = shutil.disk_usage(cfg.paths.images.anchor or "C:\\").free / 1e9

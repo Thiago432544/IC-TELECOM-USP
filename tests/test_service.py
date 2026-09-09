@@ -136,3 +136,99 @@ def test_alerta_de_queda_manda_o_grafico_de_conexao():
     from monitor.service import chart_metric_for
     for kind in ("down", "group_down", "flapping"):
         assert chart_metric_for(kind) == "conexao"
+
+
+def test_camera_fora_ha_dias_continua_gravando_idade(tmp_path):
+    """O watcher varre so as pastas de hoje e de ontem. Passados dois dias sem
+    frame ele devolve None, e ate 09/09/2026 o service simplesmente parava de
+    gravar amostra.
+
+    O estrago era duplo: o /status congelava no ultimo numero - a 102 disse
+    "ha 1d19h" por duas semanas - e, sem amostra nenhuma, coverage_gaps() lia
+    a janela inteira como "sem cobertura". Uma camera fora ha dias aparecia
+    como "sem dados" e "sem intervalo", ou seja, uma queda real pintada de
+    ignorancia.
+
+    O instante do ultimo frame continua conhecido: e' `ts - valor` da ultima
+    amostra. A idade de agora sai dai.
+    """
+    from monitor.service import record_samples
+    from monitor.watcher import CameraSample
+
+    s = Store(tmp_path / "m.db")
+    now = time.time()
+    ultimo_frame = now - 9 * 86400
+    # amostra escrita enquanto o watcher ainda enxergava a camera: 40h depois
+    # do ultimo frame, valendo 40h de idade
+    s.add_sample(ultimo_frame + 40 * 3600, "102", "last_frame_age_s", 40 * 3600.0)
+
+    record_samples(s, [CameraSample("102", 0.0, None)], now)
+
+    [(_, idade)] = s.samples("102", "last_frame_age_s", now - 1)
+    assert abs(idade - 9 * 86400) < 2
+    s.close()
+
+
+def test_idade_medida_pelo_watcher_vence_a_costurada(tmp_path):
+    """A costura e' so para quando o watcher perde a camera. Enquanto ele ve o
+    frame, quem manda e' a medicao - inverter a precedencia congelaria a serie
+    numa camera saudavel."""
+    from monitor.service import record_samples
+    from monitor.watcher import CameraSample
+
+    s = Store(tmp_path / "m.db")
+    now = time.time()
+    s.add_sample(now - 86400, "105", "last_frame_age_s", 3600.0)   # amostra velha
+
+    record_samples(s, [CameraSample("105", 57.0, 4.0)], now)
+
+    [(_, idade)] = s.samples("105", "last_frame_age_s", now - 1)
+    assert idade == 4.0
+    s.close()
+
+
+def test_camera_que_nunca_entregou_frame_nao_ganha_idade_inventada(tmp_path):
+    """Sem amostra anterior nao ha instante de ultimo frame para costurar.
+    Gravar 0 ou `now` aqui inventaria uma camera que nunca existiu - "sem
+    dados" e' a resposta honesta."""
+    from monitor.service import record_samples
+    from monitor.watcher import CameraSample
+
+    s = Store(tmp_path / "m.db")
+    now = time.time()
+
+    record_samples(s, [CameraSample("106", 0.0, None)], now)
+
+    assert s.samples("106", "last_frame_age_s", 0) == []
+    assert s.samples("106", "frames_min", 0) != []      # a taxa continua indo
+    s.close()
+
+
+def test_queda_longa_deixa_de_ser_lida_como_sem_dados(tmp_path):
+    """Efeito de segunda ordem do mesmo bug, e o que mais enganava.
+
+    Sem amostra, coverage_gaps() devolvia a janela inteira como "sem
+    cobertura", availability() virava None e outages() nao achava queda
+    nenhuma: uma camera fora ha dias aparecia no /status como "sem dados" e
+    "sem intervalo". Com a serie costurada, a queda volta a ser uma queda.
+    """
+    from monitor.service import record_samples
+    from monitor.uptime import availability, coverage_gaps, outages
+    from monitor.watcher import CameraSample
+
+    s = Store(tmp_path / "m.db")
+    now = time.time()
+    ultimo_frame = now - 5 * 86400
+    s.add_sample(now - 660, "106", "last_frame_age_s", (now - 660) - ultimo_frame)
+    for k in range(10, 0, -1):
+        record_samples(s, [CameraSample("106", 0.0, None)], now - k * 60)
+
+    since = now - 600
+    gaps = coverage_gaps(s, "106", since, now)
+    outs = outages(s, "106", since, now, min_s=300)
+
+    assert gaps == []
+    assert len(outs) == 1
+    assert abs(outs[0].start - ultimo_frame) < 2      # instante real do frame
+    assert availability(outs, since, now, tuple(gaps)) == 0.0
+    s.close()
