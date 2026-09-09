@@ -1,0 +1,41 @@
+# Sonda rodada na Raspberry da COW (junto da eNodeB), via AnyDesk, em 02/09/2026.
+# Comandos e saida colados do terminal, sem edicao. Interpretacao no diario de 02/09.
+
+pi@pi:~ $ hostname -I; ip route; ip neigh
+192.168.150.10 192.168.10.103 192.168.1.105 172.16.109.183 fd0b:2e33:8151:10:6089:5ae0:a315:e8bb 2803:9810:4813:1b10:3d93:a011:4d78:10bb 
+default via 192.168.1.1 dev wlan0 proto dhcp src 192.168.1.105 metric 600 
+192.168.1.0/24 dev wlan0 proto kernel scope link src 192.168.1.105 metric 600 
+192.168.10.0/24 dev eth0 proto kernel scope link src 192.168.10.103 metric 100 
+192.168.150.0/24 dev eth0 proto kernel scope link src 192.168.150.10 metric 100 
+192.168.10.2 dev eth0 lladdr 28:3b:82:1f:24:c9 STALE 
+192.168.10.1 dev eth0 FAILED 
+192.168.10.102 dev eth0 lladdr 8a:1e:57:1b:dc:b8 STALE 
+192.168.10.101 dev eth0 lladdr 8a:1e:57:1b:dc:ba STALE 
+192.168.10.100 dev eth0 lladdr 48:bf:74:2b:e2:91 STALE 
+192.168.10.107 dev eth0 lladdr d8:cb:8a:db:ca:e7 STALE 
+192.168.10.106 dev eth0 lladdr 8a:1e:57:1b:dc:b9 STALE 
+192.168.10.105 dev eth0 lladdr 8a:1e:57:1b:dc:b7 STALE 
+192.168.150.1 dev eth0 lladdr 48:bf:74:2b:e2:91 REACHABLE 
+192.168.1.1 dev wlan0 lladdr 74:24:9f:4d:36:7f REACHABLE 
+fd0b:2e33:8151:10::1 dev wlan0 lladdr 74:24:9f:4d:36:7f router STALE 
+fe80::7624:9fff:fe4d:367f dev wlan0 lladdr 74:24:9f:4d:36:7f router REACHABLE 
+
+pi@pi:~ $ for h in 102 106; do timeout 3 bash -c "</dev/tcp/192.168.10.$h/22" && echo "$h:22 ABERTA" || echo "$h:22 FECHADA/TIMEOUT ($?)"; done
+bash: connect: Connection refused
+bash: line 1: /dev/tcp/192.168.10.102/22: Connection refused
+102:22 FECHADA/TIMEOUT (1)
+bash: connect: Connection refused
+bash: line 1: /dev/tcp/192.168.10.106/22: Connection refused
+106:22 FECHADA/TIMEOUT (1)
+
+pi@pi:~ $ sudo timeout 120 tcpdump ...
+timeout: failed to run command 'tcpdump': No such file or directory
+sudo: tcpdump: command not found
+
+# OUIs (IEEE, via maclookup.app em 02/09/2026):
+#   48:bf:74 = Baicells Technologies  -> 192.168.10.100 e 192.168.150.1 sao a mesma eNodeB
+#   28:3b:82 = D-Link International   -> 192.168.10.2, nao identificado
+#   d8:cb:8a = Micro-Star Int'l (MSI) -> 192.168.10.107, nao identificado (PC?)
+# MACs 8a:1e:57:1b:dc:b7..ba sao virtuais, gerados pela eNodeB (LGW modo L2):
+#   8A + hex(12 ultimos digitos do IMSI). Conferido com o IMSI da 105 (724130310462647):
+#   .105 -> 724130310462647   .102 -> 724130310462648   .106 -> 724130310462649   .101 -> 724130310462650
