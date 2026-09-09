@@ -53,6 +53,8 @@ class AlertEngine:
         # que a estabilizacao ainda renda uma mensagem no fim da tempestade
         self._mudo: set[str] = set()
         self._deg_since: dict[str, float] = {}
+        # ja avisou nesta degradacao? o primeiro notifica, o resto e' mudo
+        self._deg_avisado: set[str] = set()
         self._link_bad_since: Optional[float] = None
         self._worker_avisado = False
         self._last_sent: dict[tuple[str, str], float] = {}
@@ -148,12 +150,23 @@ class AlertEngine:
                 self._deg_since.setdefault(cam, now)
                 if (now - self._deg_since[cam] > self.cfg.degraded_after_s
                         and self._ok_to_send(now, cam, "degraded")):
+                    # Mesmo tratamento da queda sustentada (2543838): a linha de
+                    # base e' historica, entao uma reducao proposital de
+                    # frequencia segura a camera abaixo dela por horas, e o
+                    # alerta repetia vibrando o celular a cada 30 min.
+                    primeiro = cam not in self._deg_avisado
+                    self._deg_avisado.add(cam)
                     out.append(Alert(
                         "degraded", cam,
                         f"Camera {cam} degradada: {st.frames_per_min:.1f} frames/min "
-                        f"(linha de base da hora: {st.baseline:.1f}).", True))
+                        f"(linha de base da hora: {st.baseline:.1f}).", True,
+                        silent=not primeiro))
             else:
                 self._deg_since.pop(cam, None)
+                # Fim do episodio: sem limpar a supressao, uma degradacao nova
+                # nos 30 min seguintes seria engolida pela janela da anterior.
+                self._deg_avisado.discard(cam)
+                self._clear(cam, "degraded")
 
             if (st.disconnects_15min >= self.cfg.flap_count
                     and self._ok_to_send(now, cam, "flapping")):

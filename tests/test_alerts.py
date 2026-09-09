@@ -184,3 +184,39 @@ def test_alerta_de_worker_insiste_mudo():
     repetido = e.evaluate(1000 + 3601, snap({"102": cam()}, erros=9))
     assert kinds(repetido) == [("worker", "monitor")]
     assert repetido[0].silent is True
+
+
+def test_degraded_insiste_mudo():
+    """Uma reducao proposital de frequencia segura a camera abaixo da linha de
+    base por horas, porque a base e' historica e demora a acompanhar. O alerta
+    repetia de meia em meia hora vibrando o celular - o mesmo erro que a queda
+    sustentada corrigiu em 2543838. O primeiro avisa; o lembrete fica no chat.
+    """
+    e = AlertEngine(CFG)
+    low = {"102": cam(age=5, rate=20.0, base=60.0)}
+    e.evaluate(1000, snap(low))
+
+    primeiro = e.evaluate(1601, snap(low))
+    assert kinds(primeiro) == [("degraded", "102")]
+    assert primeiro[0].silent is False
+
+    repetido = e.evaluate(1601 + 1801, snap(low))
+    assert kinds(repetido) == [("degraded", "102")]
+    assert repetido[0].silent is True
+
+
+def test_novo_episodio_de_degradada_volta_a_notificar():
+    """Fim do episodio limpa a supressao: uma degradacao nova logo depois de
+    uma que acabou nao pode ser engolida pela janela de 30 min da anterior."""
+    e = AlertEngine(CFG)
+    low = {"102": cam(age=5, rate=20.0, base=60.0)}
+    ok = {"102": cam(age=5, rate=60.0, base=60.0)}
+    e.evaluate(1000, snap(low))
+    assert e.evaluate(1601, snap(low))[0].silent is False
+
+    e.evaluate(1700, snap(ok))          # normalizou: encerra o episodio
+    e.evaluate(2000, snap(low))         # comeca a contar de novo
+
+    novo = e.evaluate(2601, snap(low))
+    assert kinds(novo) == [("degraded", "102")]
+    assert novo[0].silent is False
