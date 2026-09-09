@@ -222,6 +222,13 @@ def main(config_path: str = "config.toml"):
         _forever(store, "cpe", cpe, cfg.cpe.interval_s)
     if radios and cfg.radio.cameras:
         _forever(store, "radio", radio, cfg.radio.interval_s)
+    # Adota o estado atual antes da primeira avaliacao: sem isto o restart
+    # redescobre quedas antigas como novas e acusa a eNodeB (ver prime()).
+    _t0 = time.time()
+    _disk0 = store.last_sample("pc", "disk_free_gb")
+    engine.prime(_t0, build_snapshot(store, cfg, _t0,
+                                     _disk0[1] if _disk0 else 1e9))
+
     _forever(store, "alerts", alerts, 30)
     if tg:
         _forever(store, "outbox", tg.flush_outbox, 60)

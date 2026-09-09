@@ -61,6 +61,26 @@ class AlertEngine:
     def _clear(self, origin, kind):
         self._last_sent.pop((origin, kind), None)
 
+    # -- partida ---------------------------------------------------------
+    def prime(self, now: float, snap: Snapshot) -> None:
+        """Adota quem ja estava fora, sem alertar. Chamado uma vez, ao subir.
+
+        O `_down` vive so na memoria, entao todo restart redescobria as quedas
+        antigas como novas - e com duas cameras fora ao mesmo tempo isso vira
+        `group_down`, que diz "provavel enlace/eNodeB". Em 30/08/2026 ele
+        disparou com a 102 e a 106 fora e apontou para o lado errado: a eNodeB
+        mostrou as duas anexadas, com o radio de pe e uplink zero. O que estava
+        morto era a Raspberry das duas.
+
+        Quem cair depois disto alerta normalmente; quem ja estava fora reaparece
+        no lembrete de queda sustentada, sem acusar ninguem.
+        """
+        for cam, st in snap.cameras.items():
+            idade = st.last_frame_age_s
+            if idade is not None and idade >= self.cfg.down_after_s:
+                self._down.add(cam)
+                self._last_sent[(cam, "down")] = now
+
     # -- avaliacao -------------------------------------------------------
     def evaluate(self, now: float, snap: Snapshot) -> list[Alert]:
         out: list[Alert] = []

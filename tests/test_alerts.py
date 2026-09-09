@@ -120,3 +120,33 @@ def test_queda_simultanea_notifica_mesmo_sendo_repeticao_de_um_lembrete():
     out = e.evaluate(1000, snap({"102": cam(age=200), "106": cam(age=210)}))
     assert kinds(out) == [("group_down", "*")]
     assert out[0].silent is False
+
+
+def test_restart_com_cameras_ja_fora_nao_reacusa_a_enodeb():
+    """O _down vive so na memoria, entao todo restart redescobria quem ja
+    estava fora como queda nova - e com duas ao mesmo tempo disparava o
+    group_down, cujo texto diz "provavel enlace/eNodeB".
+
+    Em 30/08/2026 ele disparou com a 102 e a 106 fora, e o diagnostico estava
+    errado: a eNodeB mostrou as duas anexadas, com o radio de pe e uplink zero.
+    O que estava morto era a Raspberry das duas. O alerta acusava justamente o
+    componente saudavel.
+    """
+    e = AlertEngine(CFG)
+    s = snap({"102": cam(age=9 * 86400), "106": cam(age=7 * 86400),
+              "105": cam(age=5)})
+
+    e.prime(1000, s)
+
+    assert e.evaluate(1030, s) == []
+
+
+def test_prime_nao_esconde_queda_nova():
+    """Adotar o estado nao pode virar mordaca: quem cair depois do restart
+    continua alertando na hora."""
+    e = AlertEngine(CFG)
+    e.prime(1000, snap({"102": cam(age=9 * 86400), "105": cam(age=5)}))
+
+    out = e.evaluate(1030, snap({"102": cam(age=9 * 86400), "105": cam(age=400)}))
+
+    assert kinds(out) == [("down", "105")]
