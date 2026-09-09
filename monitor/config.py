@@ -43,6 +43,10 @@ class AlertCfg:
     link_rsrp_min: float
     link_rsrq_min: float
     link_after_s: int
+    # auto-alarme do monitor: erros de worker na ultima hora a partir dos quais
+    # ele avisa que pode ter cegado. Default para o config.toml em producao
+    # continuar carregando sem edicao.
+    worker_errors_max: int = 3
 
 @dataclass(frozen=True)
 class RadioCfg:

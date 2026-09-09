@@ -6,6 +6,10 @@ from typing import Optional
 from monitor.config import AlertCfg
 from monitor.metrics import fmt_dur
 
+# Janela do auto-alarme: erros de worker sao contados nela, e o lembrete
+# respeita o mesmo periodo. service.py importa daqui para nao divergir.
+WORKER_WINDOW_S = 3600.0
+
 
 @dataclass(frozen=True)
 class CamState:
@@ -21,6 +25,8 @@ class Snapshot:
     disk_free_gb: float
     rsrp: Optional[float]
     rsrq: Optional[float]
+    # excecoes de worker na ultima hora; ver o alarme proprio em evaluate()
+    worker_errors: int = 0
 
 
 @dataclass(frozen=True)
@@ -48,6 +54,7 @@ class AlertEngine:
         self._mudo: set[str] = set()
         self._deg_since: dict[str, float] = {}
         self._link_bad_since: Optional[float] = None
+        self._worker_avisado = False
         self._last_sent: dict[tuple[str, str], float] = {}
 
     # -- supressao -------------------------------------------------------
@@ -183,6 +190,25 @@ class AlertEngine:
                                  False))
         else:
             self._link_bad_since = None
+
+        # monitor cego: _forever() captura a excecao de qualquer worker e grava
+        # worker_error, mas ninguem lia. Um worker que estoura todo ciclo deixa
+        # o monitor no ar, com o /status respondendo, e a medicao parada - a
+        # falha silenciosa que este projeto existe para eliminar, dentro do
+        # proprio vigia. Erro avulso nao acorda ninguem; erro que repete, sim.
+        if snap.worker_errors >= self.cfg.worker_errors_max:
+            if self._ok_to_send(now, "monitor", "worker",
+                                interval=WORKER_WINDOW_S):
+                primeiro = not self._worker_avisado
+                self._worker_avisado = True
+                out.append(Alert(
+                    "worker", "monitor",
+                    f"Monitor com {snap.worker_errors} falhas internas na ultima "
+                    f"hora - a medicao pode ter parado.", False,
+                    silent=not primeiro))
+        else:
+            self._worker_avisado = False
+            self._clear("monitor", "worker")
 
         # disco (re-alerta diario)
         if snap.disk_free_gb < self.cfg.disk_min_gb:

@@ -5,7 +5,8 @@ import threading
 import time
 from pathlib import Path
 
-from monitor.alerts import AlertEngine, CamState, Snapshot
+from monitor.alerts import (WORKER_WINDOW_S, AlertEngine, CamState,
+                            Snapshot)
 from monitor.baseline import hourly_baseline
 from monitor.bot import BotHandler
 from monitor.charts import render_metric_chart
@@ -41,6 +42,8 @@ def build_snapshot(store: Store, cfg: Config, now: float,
     return Snapshot(
         cameras=cams,
         disk_free_gb=disk_free_gb,
+        worker_errors=store.count_events("monitor", "worker_error",
+                                         now - WORKER_WINDOW_S),
         rsrp=rsrp[1] if rsrp and now - rsrp[0] < fresh else None,
         rsrq=rsrq[1] if rsrq and now - rsrq[0] < fresh else None,
     )

@@ -10,8 +10,9 @@ def cam(age=10.0, rate=60.0, base=60.0, disc=0):
     return CamState(frames_per_min=rate, last_frame_age_s=age,
                     baseline=base, disconnects_15min=disc)
 
-def snap(cams, disk=200.0, rsrp=None, rsrq=None):
-    return Snapshot(cameras=cams, disk_free_gb=disk, rsrp=rsrp, rsrq=rsrq)
+def snap(cams, disk=200.0, rsrp=None, rsrq=None, erros=0):
+    return Snapshot(cameras=cams, disk_free_gb=disk, rsrp=rsrp, rsrq=rsrq,
+                    worker_errors=erros)
 
 def kinds(alerts):
     return [(a.kind, a.origin) for a in alerts]
@@ -150,3 +151,36 @@ def test_prime_nao_esconde_queda_nova():
     out = e.evaluate(1030, snap({"102": cam(age=9 * 86400), "105": cam(age=400)}))
 
     assert kinds(out) == [("down", "105")]
+
+
+def test_monitor_cego_avisa_em_vez_de_ficar_quieto():
+    """_forever() captura qualquer excecao de worker e grava um evento
+    worker_error - que ninguem lia. Um worker estourando todo ciclo deixava o
+    monitor no ar, com o /status respondendo, e a medicao parada.
+
+    Num projeto cuja tese e' a falha silenciosa, o monitor falhar em silencio
+    era a ironia que faltava fechar.
+    """
+    e = AlertEngine(CFG)
+    out = e.evaluate(1000, snap({"102": cam()}, erros=5))
+    assert kinds(out) == [("worker", "monitor")]
+    assert "5" in out[0].text
+
+
+def test_erro_isolado_de_worker_nao_alerta():
+    """Uma excecao avulsa fica no banco e nao acorda ninguem. O que importa e'
+    o worker que estoura de novo e de novo - esse e' o que cega o monitor."""
+    e = AlertEngine(CFG)
+    assert e.evaluate(1000, snap({"102": cam()}, erros=1)) == []
+
+
+def test_alerta_de_worker_insiste_mudo():
+    """Mesmo tratamento que a queda sustentada ganhou em 2543838: o primeiro
+    avisa, os lembretes ficam no chat sem vibrar."""
+    e = AlertEngine(CFG)
+    primeiro = e.evaluate(1000, snap({"102": cam()}, erros=5))
+    assert primeiro[0].silent is False
+    assert e.evaluate(1000 + 1800, snap({"102": cam()}, erros=9)) == []
+    repetido = e.evaluate(1000 + 3601, snap({"102": cam()}, erros=9))
+    assert kinds(repetido) == [("worker", "monitor")]
+    assert repetido[0].silent is True
