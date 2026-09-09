@@ -4,6 +4,7 @@ import shutil
 import threading
 import time
 from pathlib import Path
+from typing import Optional
 
 from monitor.alerts import (WORKER_WINDOW_S, AlertEngine, CamState,
                             Snapshot)
@@ -23,7 +24,7 @@ from monitor.watcher import FrameWatcher
 
 
 def build_snapshot(store: Store, cfg: Config, now: float,
-                   disk_free_gb: float) -> Snapshot:
+                   disk_free_gb: Optional[float]) -> Snapshot:
     cams = {}
     for cam in cfg.cameras:
         fpm = store.last_sample(cam, "frames_min")
@@ -47,6 +48,20 @@ def build_snapshot(store: Store, cfg: Config, now: float,
         rsrp=rsrp[1] if rsrp and now - rsrp[0] < fresh else None,
         rsrq=rsrq[1] if rsrq and now - rsrq[0] < fresh else None,
     )
+
+
+def disk_free(store: Store, now: float,
+              max_idade_s: float = 180.0) -> Optional[float]:
+    """Espaco livre em disco, ou None quando nao ha leitura recente.
+
+    Tres intervalos do worker, como o painel ja faz com o radio. Se o worker do
+    disco morrer, a ultima amostra fica no banco para sempre, e usa-la como
+    atual esconderia um disco que encheu depois.
+    """
+    r = store.last_sample("pc", "disk_free_gb")
+    if r is None or now - r[0] > max_idade_s:
+        return None
+    return r[1]
 
 
 def record_samples(store: Store, amostras, now: float) -> None:
@@ -192,9 +207,7 @@ def main(config_path: str = "config.toml"):
 
     def alerts():
         now = time.time()
-        last_disk = store.last_sample("pc", "disk_free_gb")
-        snap = build_snapshot(store, cfg, now,
-                              last_disk[1] if last_disk else 1e9)
+        snap = build_snapshot(store, cfg, now, disk_free(store, now))
         for a in engine.evaluate(now, snap):
             store.add_event(now, a.origin, f"alert_{a.kind}", a.text)
             if tg is None:
@@ -228,9 +241,7 @@ def main(config_path: str = "config.toml"):
     # Adota o estado atual antes da primeira avaliacao: sem isto o restart
     # redescobre quedas antigas como novas e acusa a eNodeB (ver prime()).
     _t0 = time.time()
-    _disk0 = store.last_sample("pc", "disk_free_gb")
-    engine.prime(_t0, build_snapshot(store, cfg, _t0,
-                                     _disk0[1] if _disk0 else 1e9))
+    engine.prime(_t0, build_snapshot(store, cfg, _t0, disk_free(store, _t0)))
 
     _forever(store, "alerts", alerts, 30)
     if tg:

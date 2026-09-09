@@ -22,7 +22,8 @@ class CamState:
 @dataclass(frozen=True)
 class Snapshot:
     cameras: dict[str, CamState]
-    disk_free_gb: float
+    # None = sem leitura recente. Nao e' "tem espaco": e' "nao sei".
+    disk_free_gb: Optional[float]
     rsrp: Optional[float]
     rsrq: Optional[float]
     # excecoes de worker na ultima hora; ver o alarme proprio em evaluate()
@@ -223,8 +224,11 @@ class AlertEngine:
             self._worker_avisado = False
             self._clear("monitor", "worker")
 
-        # disco (re-alerta diario)
-        if snap.disk_free_gb < self.cfg.disk_min_gb:
+        # disco (re-alerta diario). Sem leitura recente o engine nao opina:
+        # ate 09/09/2026 o service passava 1e9 GB quando faltava amostra, e uma
+        # falha de leitura virava "disco folgado", calando o alerta bem quando
+        # o disco deixava de ser observado.
+        if snap.disk_free_gb is not None and snap.disk_free_gb < self.cfg.disk_min_gb:
             if self._ok_to_send(now, "pc", "disk", interval=86400):
                 out.append(Alert("disk", "pc",
                                  f"Disco D: com {snap.disk_free_gb:.0f} GB livres "

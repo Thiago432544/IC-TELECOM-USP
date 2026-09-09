@@ -232,3 +232,20 @@ def test_queda_longa_deixa_de_ser_lida_como_sem_dados(tmp_path):
     assert abs(outs[0].start - ultimo_frame) < 2      # instante real do frame
     assert availability(outs, since, now, tuple(gaps)) == 0.0
     s.close()
+
+
+def test_leitura_de_disco_velha_nao_vale_como_leitura(tmp_path):
+    """Se o worker do disco morrer, a ultima amostra fica no banco para sempre.
+    Usa-la como atual esconderia um disco que encheu depois - o mesmo erro do
+    RSRP velho que o _radio_recente ja evitava no painel."""
+    from monitor.service import disk_free
+
+    s = Store(tmp_path / "m.db")
+    now = time.time()
+
+    assert disk_free(s, now) is None                      # nunca leu
+    s.add_sample(now - 3600, "pc", "disk_free_gb", 500.0)
+    assert disk_free(s, now) is None                      # leu ha uma hora
+    s.add_sample(now - 30, "pc", "disk_free_gb", 42.0)
+    assert disk_free(s, now) == 42.0
+    s.close()

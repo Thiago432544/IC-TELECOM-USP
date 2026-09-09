@@ -220,3 +220,13 @@ def test_novo_episodio_de_degradada_volta_a_notificar():
     novo = e.evaluate(2601, snap(low))
     assert kinds(novo) == [("degraded", "102")]
     assert novo[0].silent is False
+
+
+def test_sem_leitura_de_disco_nao_finge_que_ha_espaco():
+    """O service passava 1e9 GB quando nao havia amostra. Uma falha de leitura
+    - o D: sumindo, por exemplo - virava "disco folgado" e o alerta nunca
+    disparava: falha aberta e silenciosa, justamente o que este projeto existe
+    para nao cometer. Sem leitura, o engine nao opina."""
+    e = AlertEngine(CFG)
+    assert e.evaluate(1000, snap({"102": cam()}, disk=None)) == []
+    assert kinds(e.evaluate(2000, snap({"102": cam()}, disk=10.0))) == [("disk", "pc")]
