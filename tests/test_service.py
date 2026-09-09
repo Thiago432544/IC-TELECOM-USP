@@ -249,3 +249,30 @@ def test_leitura_de_disco_velha_nao_vale_como_leitura(tmp_path):
     s.add_sample(now - 30, "pc", "disk_free_gb", 42.0)
     assert disk_free(s, now) == 42.0
     s.close()
+
+
+def test_snapshot_leva_o_radio_da_camera_e_descarta_leitura_velha(tmp_path):
+    """O alerta de radio so vale sobre leitura fresca: com o cron parado na Pi,
+    o tail -1 devolve a mesma linha para sempre, e alertar sobre o RSRP da
+    semana passada seria pior que nao alertar. Mesmo criterio do painel."""
+    cfg = load_config(Path("config.example.toml"))
+    s = Store(tmp_path / "m.db")
+    now = time.time()
+    s.add_sample(now - 30, "105", "rsrp_cam", -97.0)
+    s.add_sample(now - 30, "105", "sinr", 12.0)
+    s.add_sample(now - 9999, "102", "rsrp_cam", -108.0)     # velha demais
+
+    snap = build_snapshot(s, cfg, now, disk_free_gb=100.0)
+
+    assert snap.cameras["105"].rsrp_cam == -97.0
+    assert snap.cameras["105"].sinr == 12.0
+    assert snap.cameras["102"].rsrp_cam is None
+    s.close()
+
+
+def test_alerta_de_radio_manda_o_grafico_do_radio():
+    """A faixa de conexao mostraria a camera no ar e contradiria o texto do
+    proprio alerta - o que caiu foi o enlace, nao a entrega. Mesmo raciocinio
+    que ja levou a degradada para o grafico de frames."""
+    from monitor.service import chart_metric_for
+    assert chart_metric_for("radio") == "rsrp_cam"

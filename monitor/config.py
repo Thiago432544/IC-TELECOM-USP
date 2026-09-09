@@ -47,6 +47,11 @@ class AlertCfg:
     # ele avisa que pode ter cegado. Default para o config.toml em producao
     # continuar carregando sem edicao.
     worker_errors_max: int = 3
+    # Radio do CPE da propria camera (rsrp_cam/sinr), nao o do lado do SPA.
+    # RSRQ de fora de proposito: aqui ele mede ocupacao de celula.
+    radio_rsrp_min: float = -100.0
+    radio_sinr_min: float = 5.0
+    radio_after_s: int = 300
 
 @dataclass(frozen=True)
 class RadioCfg:

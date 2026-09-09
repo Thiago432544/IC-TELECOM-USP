@@ -17,6 +17,12 @@ class CamState:
     last_frame_age_s: Optional[float]
     baseline: Optional[float]
     disconnects_15min: int
+    # Radio do CPE da propria camera, ja filtrado por frescor. RSRQ nao entra
+    # de proposito: nesta rede privada quase vazia ele mede ocupacao de celula
+    # e nao qualidade de caminho - fica colado perto do teto de -3 dB e quase
+    # nao se mexe, entao alertar por ele seria ruido. Ver o diario de 09/09.
+    rsrp_cam: Optional[float] = None
+    sinr: Optional[float] = None
 
 
 @dataclass(frozen=True)
@@ -57,6 +63,7 @@ class AlertEngine:
         # ja avisou nesta degradacao? o primeiro notifica, o resto e' mudo
         self._deg_avisado: set[str] = set()
         self._link_bad_since: Optional[float] = None
+        self._radio_bad_since: dict[str, float] = {}
         self._worker_avisado = False
         self._last_sent: dict[tuple[str, str], float] = {}
 
@@ -168,6 +175,25 @@ class AlertEngine:
                 # nos 30 min seguintes seria engolida pela janela da anterior.
                 self._deg_avisado.discard(cam)
                 self._clear(cam, "degraded")
+
+            # radio da propria camera: o que chega no poste. O alerta de
+            # `link` olha o CPE do lado do SPA, que fica a 400 m da estacao e
+            # le saturado - ele nao diz nada sobre as cameras.
+            ruim = ((st.rsrp_cam is not None
+                     and st.rsrp_cam < self.cfg.radio_rsrp_min)
+                    or (st.sinr is not None
+                        and st.sinr < self.cfg.radio_sinr_min))
+            if ruim:
+                self._radio_bad_since.setdefault(cam, now)
+                if (now - self._radio_bad_since[cam] >= self.cfg.radio_after_s
+                        and self._ok_to_send(now, cam, "radio")):
+                    out.append(Alert(
+                        "radio", cam,
+                        f"Camera {cam} com radio ruim: RSRP={st.rsrp_cam} dBm, "
+                        f"SINR={st.sinr} dB.", True, silent=False))
+            else:
+                self._radio_bad_since.pop(cam, None)
+                self._clear(cam, "radio")
 
             if (st.disconnects_15min >= self.cfg.flap_count
                     and self._ok_to_send(now, cam, "flapping")):

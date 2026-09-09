@@ -41,7 +41,7 @@ def build_status(store: Store, cfg: Config, now: float) -> dict:
             # nomes distintos, os dois juntos dizem se o enlace cai ou trava
             "disconnects_24h": store.count_events(cam, "DISCONNECT", since),
             # radio do CPE da propria camera; None quando a leitura envelheceu
-            "radio": _radio_recente(store, cam, cfg, now),
+            "radio": radio_recente(store, cam, cfg, now),
         }
     disk = store.last_sample("pc", "disk_free_gb")
     rsrp = store.last_sample("cpe", "rsrp")
@@ -59,7 +59,7 @@ def build_status(store: Store, cfg: Config, now: float) -> dict:
             "cpe_up": bool(up[1]) if up else None}
 
 
-def _radio_recente(store: Store, cam: str, cfg: Config, now: float):
+def radio_recente(store: Store, cam: str, cfg: Config, now: float):
     """RSRP/RSRQ/SINR da camera, so se a leitura ainda vale.
 
     Sem o corte de idade, um coletor parado na Pi manteria o ultimo numero em

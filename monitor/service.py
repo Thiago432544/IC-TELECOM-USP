@@ -14,7 +14,7 @@ from monitor.charts import render_metric_chart
 from monitor.config import Config, load_config
 from monitor.metrics import DEFAULT_WINDOW, find_metric, outage_floor
 from monitor.cpe import CpeScraper
-from monitor.panel import run_panel
+from monitor.panel import radio_recente, run_panel
 from monitor.radio import RadioReader
 from monitor.store import Store
 from monitor.summary import build_daily_summary
@@ -30,12 +30,18 @@ def build_snapshot(store: Store, cfg: Config, now: float,
         fpm = store.last_sample(cam, "frames_min")
         age = store.last_sample(cam, "last_frame_age_s")
         hour = time.localtime(now).tm_hour
+        # mesmo filtro de frescor do painel: com o cron parado na Pi o
+        # tail -1 devolve a mesma linha para sempre, e alertar sobre o RSRP da
+        # semana passada e' pior que nao alertar
+        rad = radio_recente(store, cam, cfg, now) or {}
         cams[cam] = CamState(
             frames_per_min=fpm[1] if fpm else None,
             last_frame_age_s=age[1] if age else None,
             baseline=hourly_baseline(store, cam, hour, now),
             disconnects_15min=store.count_events(
                 cam, "DISCONNECT", now - cfg.alerts.flap_window_s),
+            rsrp_cam=rad.get("rsrp"),
+            sinr=rad.get("sinr"),
         )
     rsrp = store.last_sample("cpe", "rsrp")
     rsrq = store.last_sample("cpe", "rsrq")
@@ -101,9 +107,10 @@ def chart_metric_for(kind: str) -> str:
 
     Camera "degradada" esta conectada: mandar a faixa de conexao mostraria
     ~100% no ar e contradiria o texto do proprio alerta. O que caiu ali foi a
-    taxa de entrega.
+    taxa de entrega. Pelo mesmo motivo, um alerta de radio manda a serie do
+    radio - a camera pode estar entregando enquanto o enlace se degrada.
     """
-    return "frames" if kind == "degraded" else "conexao"
+    return {"degraded": "frames", "radio": "rsrp_cam"}.get(kind, "conexao")
 
 
 def alert_chart(store: Store, cfg: Config, camera: str, now: float,

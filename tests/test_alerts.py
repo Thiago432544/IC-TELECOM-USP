@@ -6,9 +6,10 @@ CFG = AlertCfg(disk_min_gb=60.0, down_after_s=180, degraded_ratio=0.5,
                realert_s=1800, link_rsrp_min=-110.0, link_rsrq_min=-15.0,
                link_after_s=300)
 
-def cam(age=10.0, rate=60.0, base=60.0, disc=0):
+def cam(age=10.0, rate=60.0, base=60.0, disc=0, rsrp_cam=None, sinr=None):
     return CamState(frames_per_min=rate, last_frame_age_s=age,
-                    baseline=base, disconnects_15min=disc)
+                    baseline=base, disconnects_15min=disc,
+                    rsrp_cam=rsrp_cam, sinr=sinr)
 
 def snap(cams, disk=200.0, rsrp=None, rsrq=None, erros=0):
     return Snapshot(cameras=cams, disk_free_gb=disk, rsrp=rsrp, rsrq=rsrq,
@@ -230,3 +231,44 @@ def test_sem_leitura_de_disco_nao_finge_que_ha_espaco():
     e = AlertEngine(CFG)
     assert e.evaluate(1000, snap({"102": cam()}, disk=None)) == []
     assert kinds(e.evaluate(2000, snap({"102": cam()}, disk=10.0))) == [("disk", "pc")]
+
+
+def test_radio_fraco_alerta_depois_de_persistir():
+    """O radio da camera era so coletado: nenhum limiar olhava para ele. Quem
+    tinha alerta era o CPE do lado do SPA, que fica a 400 m da estacao, le
+    saturado e nao diz nada sobre as cameras."""
+    e = AlertEngine(CFG)
+    s = snap({"106": cam(rsrp_cam=-108.0, sinr=18.0)})
+    assert e.evaluate(1000, s) == []              # um mergulho nao alerta
+    out = e.evaluate(1301, s)
+    assert kinds(out) == [("radio", "106")]
+    assert "-108" in out[0].text
+
+
+def test_sinr_baixo_alerta_mesmo_com_rsrp_otimo():
+    """Perto e sujo: potencia no teto e ruido alto. O RSRP sozinho leria como
+    enlace excelente, e e' o SINR que decide a modulacao, ou seja a vazao."""
+    e = AlertEngine(CFG)
+    s = snap({"105": cam(rsrp_cam=-50.0, sinr=2.0)})
+    e.evaluate(1000, s)
+    out = e.evaluate(1301, s)
+    assert kinds(out) == [("radio", "105")]
+    assert "SINR" in out[0].text
+
+
+def test_radio_sem_leitura_nao_alerta():
+    """Sem chave SSH, com a Pi fora ou com o cron parado nao ha amostra. E
+    ausencia de leitura nao e' enlace ruim."""
+    e = AlertEngine(CFG)
+    s = snap({"106": cam(rsrp_cam=None, sinr=None)})
+    e.evaluate(1000, s)
+    assert e.evaluate(1301, s) == []
+
+
+def test_radio_que_melhora_zera_a_contagem():
+    e = AlertEngine(CFG)
+    ruim = snap({"106": cam(rsrp_cam=-108.0, sinr=18.0)})
+    bom = snap({"106": cam(rsrp_cam=-70.0, sinr=20.0)})
+    e.evaluate(1000, ruim)
+    e.evaluate(1100, bom)
+    assert e.evaluate(1301, ruim) == []

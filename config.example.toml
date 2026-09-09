@@ -39,6 +39,22 @@ link_rsrp_min = -110.0
 link_rsrq_min = -15.0
 link_after_s = 300
 
+# Auto-alarme: excecoes de worker na ultima hora a partir das quais o monitor
+# avisa que pode ter cegado. Erro avulso nao acorda ninguem; worker que estoura
+# todo ciclo passa de 3 em minutos.
+worker_errors_max = 3
+
+# Radio do CPE da PROPRIA camera (rsrp_cam/sinr, lidos pela Rasp), e nao o do
+# lado do SPA, que fica a ~400 m da estacao, le saturado e nao diz nada sobre
+# as cameras. Abaixo de -100 dBm a cobertura entra em risco; abaixo de 5 dB de
+# SINR a vazao desaba, porque e' o SINR que decide a modulacao.
+# O RSRQ fica de fora de proposito: nesta rede privada quase vazia ele mede
+# ocupacao de celula, nao qualidade de caminho - vive colado perto do teto de
+# -3 dB e quase nao se mexe. Ver o diario de 09/09.
+radio_rsrp_min = -100.0
+radio_sinr_min = 5.0
+radio_after_s = 300
+
 [charts]
 outage_min_s = 0    # 0 = piso automatico pela janela (30min->30s, 24h->5min)
 
