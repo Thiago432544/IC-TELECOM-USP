@@ -1,0 +1,1778 @@
+From d4796d4f140f4eebfcbbf993a98420cd5d1eef55 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 14 Oct 2026 09:29:54 -0300
+Subject: [PATCH 1/3] feat(rasp): caixa-preta para registrar a causa da proxima
+ queda
+
+A 102 voltou em 14/10 depois de 50 dias fora. A Pi ficou ligada o tempo
+todo e a ultima linha do router.log era o Chrome falhando ao abrir - o F7.
+O que faltou para fechar o caso sem deducao foi o erro do cliente, a hora
+de cada linha do router.log e o estado da rede vista de dentro da Pi.
+
+- caixa_preta.py: agente stdlib que registra a cada 30 s gateway, ARP,
+  WAN do CPE, conexao com o servidor e fila de envio, processos do
+  cliente, sistema e relogio (Date do CPE); --relatorio imprime a linha
+  do tempo com a hora real estimada
+- instalador, unit e journal persistente (nivel 1, so observacao)
+- camera-client.service com PYTHONUNBUFFERED e install_camera_client.sh
+  instalando o watchdog_test.py blindado e headless (nivel 2)
+- runbook, diario de 14/10 e 16 testes
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01BudwEqt7uLTga9fhoonoyf
+---
+ deploy/rasp/caixa-preta.service       |  22 +
+ deploy/rasp/caixa_preta.py            | 843 ++++++++++++++++++++++++++
+ deploy/rasp/camera-client.service     |   3 +
+ deploy/rasp/instalar_caixa_preta.sh   |  70 +++
+ deploy/rasp/install_camera_client.sh  |  16 +
+ deploy/rasp/journald-persistente.conf |   6 +
+ docs/diario/2026-10-14-sessao.md      |  69 +++
+ docs/runbooks/caixa-preta.md          | 133 ++++
+ tests/test_caixa_preta.py             | 286 +++++++++
+ 9 files changed, 1448 insertions(+)
+ create mode 100644 deploy/rasp/caixa-preta.service
+ create mode 100644 deploy/rasp/caixa_preta.py
+ create mode 100644 deploy/rasp/instalar_caixa_preta.sh
+ create mode 100644 deploy/rasp/journald-persistente.conf
+ create mode 100644 docs/diario/2026-10-14-sessao.md
+ create mode 100644 docs/runbooks/caixa-preta.md
+ create mode 100644 tests/test_caixa_preta.py
+
+diff --git a/deploy/rasp/caixa-preta.service b/deploy/rasp/caixa-preta.service
+new file mode 100644
+index 0000000..22f2011
+--- /dev/null
++++ b/deploy/rasp/caixa-preta.service
+@@ -0,0 +1,22 @@
++[Unit]
++Description=Caixa-preta da camera Porto de Santos (rede, cliente e sistema)
++After=network.target
++
++[Service]
++Type=simple
++# camera, gateway etc. vem de /etc/caixa-preta.conf (escrito pelo instalador)
++ExecStart=/usr/bin/python3 -u /opt/caixa-preta/caixa_preta.py
++Restart=always
++RestartSec=15
++# O agente nunca pode tirar recurso do cliente nem ser morto antes dele:
++# prioridade mais baixa, teto de memoria e CPU, mas protegido do OOM killer.
++Nice=5
++OOMScoreAdjust=-900
++MemoryMax=96M
++CPUQuota=15%
++# eventos tambem vao para o journal (persistente): journalctl -u caixa-preta
++StandardOutput=journal
++StandardError=journal
++
++[Install]
++WantedBy=multi-user.target
+diff --git a/deploy/rasp/caixa_preta.py b/deploy/rasp/caixa_preta.py
+new file mode 100644
+index 0000000..6030410
+--- /dev/null
++++ b/deploy/rasp/caixa_preta.py
+@@ -0,0 +1,843 @@
++"""Caixa-preta da camera: registra, de dentro da Pi, o que explica a proxima queda.
++
++Por que existe. Em 14/10/2026 a 102 voltou depois de 50 dias fora, e so ai foi
++possivel ler o que aconteceu: a Pi ficou ligada o tempo todo (54 dias de
++uptime), e a ultima linha do router.log era o Chrome falhando ao abrir - o F7.
++Mas o que faltou para fechar o caso foi exatamente o que ninguem registrava:
++
++- o erro do cliente quando ele morre (ele roda num terminal, e o erro some);
++- a hora de cada coisa (o router.log antigo nao tem hora, e o relogio da Pi
++  esta ~40 dias atrasado);
++- o estado da rede vista de dentro: o gateway responde? a conexao com o
++  servidor esta aberta? os bytes estao saindo ou empilhados na fila?
++
++Este agente registra isso a cada 30 s numa pasta propria, sem tocar no cliente.
++
++O que e' gravado (JSON, uma linha por registro, em /var/log/caixa-preta/):
++
++- "amostra" a cada ciclo: gateway (ping e ARP), WAN do CPE, porta 80 do CPE,
++  cabo (carrier), bytes da eth0, conexoes com o servidor :55000 com a fila de
++  envio e as retransmissoes, processos do cliente (PID, idade, memoria),
++  throttled, temperatura, carga, memoria, disco, NTP.
++- "evento" so quando algo muda: gateway perdido/voltou, conexao abriu/fechou,
++  cliente novo/sumiu, fila de envio presa, linha nova no router.log, arquivo
++  novo em logs_failure (com o Motivo), boot novo, relogio (Date do CPE).
++
++Cada linha carrega o relogio da Pi (t), o monotonico (mono) e o boot_id. O
++relogio da Pi esta errado em duas das tres cameras; a hora "real" sai do
++cabecalho Date do web server do CPE, registrado a cada 10 min como evento
++"relogio" (offset = Date do CPE - relogio da Pi).
++
++Principio da spec: o monitoramento nunca pode causar a falha. Por isso: so
++stdlib, somente leitura sobre tudo do cliente, nenhuma conexao com o servidor
++enquanto o cliente esta conectado, e falha propria vira evento "erro" - o laco
++nunca para.
++
++Uso:
++    sudo python3 caixa_preta.py --camera 102            # laco (o servico)
++    sudo python3 caixa_preta.py --camera 102 --uma      # um ciclo, imprime e sai
++    python3 caixa_preta.py --relatorio                  # linha do tempo dos eventos
++    python3 caixa_preta.py --relatorio --horas 6        # so as ultimas 6 h
++"""
++import argparse
++import email.utils
++import glob
++import http.client
++import json
++import os
++import socket
++import struct
++import subprocess
++import sys
++import time
++import traceback
++
++VERSAO = "2026-10-14"
++
++PADRAO = {
++    "camera": "",
++    "gateway": "192.168.11.254",      # LAN do CPE (Elsys); Teltonika: 192.168.11.1
++    "wan": "",                         # WAN do proprio CPE; vazio = 192.168.10.<camera>
++    "servidor": "192.168.10.101",
++    "porta": 55000,
++    "intervalo": 30,
++    "base": "/home/pi/Desktop/Porto_de_Santos_2025/PRINCIPAL",
++    "logs_failure": "/home/pi/Desktop/logs_failure",
++    "saida": "/var/log/caixa-preta",
++    "estado": "/var/lib/caixa-preta/estado.json",
++    "proc": "/proc",
++    "sys": "/sys",
++    "iface": "eth0",
++    "padrao_cliente": "Cliente",
++    "rotacao_mb": 20,
++    "manter_arquivos": 100,
++}
++CONF = "/etc/caixa-preta.conf"
++
++# Cadencias, em segundos. O CPE e' o equipamento suspeito: sonda-lo de leve.
++CADA_CPE_TCP = 60
++CADA_CPE_HTTP = 600
++CADA_SERVIDOR = 300            # so quando o cliente NAO esta conectado
++CADA_VCGENCMD = 300
++CICLOS_FILA_PRESA = 4          # 4 x 30 s com bytes parados na fila de envio
++
++ESTADOS_TCP = {
++    "01": "ESTABLISHED", "02": "SYN_SENT", "03": "SYN_RECV", "04": "FIN_WAIT1",
++    "05": "FIN_WAIT2", "06": "TIME_WAIT", "07": "CLOSE", "08": "CLOSE_WAIT",
++    "09": "LAST_ACK", "0A": "LISTEN", "0B": "CLOSING",
++}
++
++
++# ---------------------------------------------------------------- leitura ---
++
++def ler(caminho, padrao=None):
++    try:
++        with open(caminho, "r", errors="replace") as f:
++            return f.read()
++    except OSError:
++        return padrao
++
++
++def le_conf(caminho=CONF):
++    """k = v, como o router.conf. Ausente, valem os padroes."""
++    cfg = {}
++    texto = ler(caminho, "") or ""
++    for linha in texto.splitlines():
++        linha = linha.split("#", 1)[0].strip()
++        if "=" in linha:
++            k, v = linha.split("=", 1)
++            cfg[k.strip()] = v.strip()
++    return cfg
++
++
++def boot_id(proc):
++    return (ler(os.path.join(proc, "sys/kernel/random/boot_id"), "") or "").strip()
++
++
++def uptime_s(proc):
++    try:
++        return float((ler(os.path.join(proc, "uptime"), "") or "0").split()[0])
++    except (ValueError, IndexError):
++        return None
++
++
++def _ip_hex(h):
++    """'0B0AA8C0' (little-endian) -> '192.168.10.11'."""
++    return socket.inet_ntoa(struct.pack("<I", int(h, 16)))
++
++
++def parse_proc_net_tcp(texto):
++    """Linhas de /proc/net/tcp -> dicts com origem, destino, estado, filas."""
++    out = []
++    for linha in (texto or "").splitlines()[1:]:
++        p = linha.split()
++        if len(p) < 7:
++            continue
++        try:
++            lip, lport = p[1].split(":")
++            rip, rport = p[2].split(":")
++            txq, rxq = p[4].split(":")
++            out.append({
++                "local": f"{_ip_hex(lip)}:{int(lport, 16)}",
++                "remoto_ip": _ip_hex(rip),
++                "remoto_porta": int(rport, 16),
++                "estado": ESTADOS_TCP.get(p[3].upper(), p[3]),
++                "txq": int(txq, 16),
++                "rxq": int(rxq, 16),
++                "retr": int(p[6], 16),
++            })
++        except (ValueError, struct.error):
++            continue
++    return out
++
++
++def conexoes_servidor(proc, ip, porta, ignorar_portas=()):
++    todas = parse_proc_net_tcp(ler(os.path.join(proc, "net/tcp"), ""))
++    return [{k: c[k] for k in ("local", "estado", "txq", "rxq", "retr")}
++            for c in todas if c["remoto_ip"] == ip and c["remoto_porta"] == porta
++            and int(c["local"].rsplit(":", 1)[1]) not in ignorar_portas]
++
++
++def parse_arp(texto, ip):
++    """Estado da entrada ARP do ip: 'ok', 'incompleta' ou None (ausente)."""
++    for linha in (texto or "").splitlines()[1:]:
++        p = linha.split()
++        if len(p) >= 4 and p[0] == ip:
++            try:
++                flags = int(p[2], 16)
++            except ValueError:
++                return "?"
++            return "ok" if flags & 0x2 else "incompleta"
++    return None
++
++
++def interface(proc, sysfs, iface):
++    base = os.path.join(sysfs, "class/net", iface)
++    d = {"carrier": (ler(os.path.join(base, "carrier"), "") or "").strip() or None,
++         "operstate": (ler(os.path.join(base, "operstate"), "") or "").strip() or None}
++    for linha in (ler(os.path.join(proc, "net/dev"), "") or "").splitlines()[2:]:
++        nome, _, resto = linha.partition(":")
++        if nome.strip() != iface:
++            continue
++        c = resto.split()
++        if len(c) >= 12:
++            d.update(rx_bytes=int(c[0]), rx_erros=int(c[2]), rx_drop=int(c[3]),
++                     tx_bytes=int(c[8]), tx_erros=int(c[10]), tx_drop=int(c[11]))
++    return d
++
++
++def processos_cliente(proc, padrao, eu=None):
++    """Processos python cujo argumento contem `padrao`, com idade e memoria."""
++    eu = os.getpid() if eu is None else eu
++    hz = os.sysconf("SC_CLK_TCK") if hasattr(os, "sysconf") else 100
++    pagina = os.sysconf("SC_PAGE_SIZE") if hasattr(os, "sysconf") else 4096
++    up = uptime_s(proc)
++    out = []
++    for d in glob.glob(os.path.join(proc, "[0-9]*")):
++        pid = int(os.path.basename(d))
++        if pid == eu:
++            continue
++        cmd = (ler(os.path.join(d, "cmdline"), "") or "").split("\0")
++        cmd = [c for c in cmd if c]
++        if not cmd or "python" not in os.path.basename(cmd[0]):
++            continue
++        if not any(padrao in c for c in cmd[1:]) or any("caixa_preta" in c for c in cmd):
++            continue
++        stat = ler(os.path.join(d, "stat"), "") or ""
++        # o nome do processo vai entre parenteses e pode ter espaco: cortar no ultimo ')'
++        campos = stat[stat.rfind(")") + 2:].split()
++        info = {"pid": pid, "cmd": " ".join(cmd)[-120:]}
++        if len(campos) > 20:
++            info["estado"] = campos[0]
++            info["ppid"] = int(campos[1])
++            info["threads"] = int(campos[17])
++            if up is not None:
++                info["idade_s"] = round(up - int(campos[19]) / hz)
++        statm = (ler(os.path.join(d, "statm"), "") or "").split()
++        if len(statm) > 1:
++            info["rss_mb"] = round(int(statm[1]) * pagina / 1048576, 1)
++        out.append(info)
++    return sorted(out, key=lambda x: x["pid"])
++
++
++def throttled(sysfs, vcgencmd_ok=True):
++    for p in glob.glob(os.path.join(sysfs, "devices/platform/soc/soc:firmware/get_throttled")):
++        v = (ler(p, "") or "").strip()
++        if v:
++            try:
++                return hex(int(v, 16))
++            except ValueError:
++                return v
++    if not vcgencmd_ok:
++        return None
++    try:
++        r = subprocess.run(["vcgencmd", "get_throttled"], capture_output=True,
++                           text=True, timeout=5)
++        return r.stdout.strip().split("=")[-1] or None
++    except (OSError, subprocess.SubprocessError):
++        return None
++
++
++def sistema(proc, sysfs):
++    d = {}
++    la = (ler(os.path.join(proc, "loadavg"), "") or "").split()
++    if la:
++        d["carga1"] = float(la[0])
++    for linha in (ler(os.path.join(proc, "meminfo"), "") or "").splitlines():
++        if linha.startswith("MemAvailable:"):
++            d["mem_livre_mb"] = int(linha.split()[1]) // 1024
++    t = (ler(os.path.join(sysfs, "class/thermal/thermal_zone0/temp"), "") or "").strip()
++    if t.isdigit():
++        d["temp_c"] = round(int(t) / 1000, 1)
++    try:
++        st = os.statvfs("/")
++        d["disco_livre_gb"] = round(st.f_bavail * st.f_frsize / 1e9, 1)
++    except OSError:
++        pass
++    for linha in (ler(os.path.join(proc, "mounts"), "") or "").splitlines():
++        p = linha.split()
++        if len(p) > 3 and p[1] == "/":
++            d["raiz_ro"] = "ro" in p[3].split(",")
++    d["ntp_sinc"] = os.path.exists("/run/systemd/timesync/synchronized")
++    return d
++
++
++# ----------------------------------------------------------------- sondas ---
++
++def _cksum(b):
++    if len(b) % 2:
++        b += b"\0"
++    s = sum(struct.unpack(f"!{len(b) // 2}H", b))
++    s = (s >> 16) + (s & 0xFFFF)
++    s += s >> 16
++    return ~s & 0xFFFF
++
++
++def ping_ms(ip, timeout=2.0, _seq=[0]):
++    """Um echo ICMP: ms, ou None sem resposta. Sem processo filho: socket de
++    ping do kernel; se ele estiver fechado (ping_group_range), socket cru, que
++    o servico pode abrir porque roda como root; por ultimo, o /bin/ping."""
++    _seq[0] = (_seq[0] + 1) & 0xFFFF
++    seq = _seq[0]
++    ident = os.getpid() & 0xFFFF
++    try:
++        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_ICMP)
++        cru = False
++    except OSError:
++        try:
++            s = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_ICMP)
++            cru = True
++        except OSError:
++            return _ping_bin(ip, timeout)
++    try:
++        corpo = b"caixa-preta"
++        cab = struct.pack("!BBHHH", 8, 0, 0, ident, seq)
++        cab = struct.pack("!BBHHH", 8, 0, _cksum(cab + corpo), ident, seq)
++        t0 = time.monotonic()
++        s.settimeout(timeout)
++        s.sendto(cab + corpo, (ip, 0))
++        while True:
++            resto = timeout - (time.monotonic() - t0)
++            if resto <= 0:
++                return None
++            s.settimeout(resto)
++            dados, origem = s.recvfrom(2048)
++            if cru:
++                if origem[0] != ip:
++                    continue
++                dados = dados[(dados[0] & 0x0F) * 4:]       # tira o cabecalho IP
++            if len(dados) < 8 or dados[0] != 0:
++                continue
++            _, _, _, rid, rseq = struct.unpack("!BBHHH", dados[:8])
++            # no socket de ping o kernel troca o id; so o seq identifica
++            if rseq == seq and (not cru or rid == ident):
++                return round((time.monotonic() - t0) * 1000, 1)
++    except (socket.timeout, TimeoutError):
++        return None
++    except OSError:
++        return None
++    finally:
++        s.close()
++
++
++def _ping_bin(ip, timeout):
++    try:
++        t0 = time.monotonic()
++        r = subprocess.run(["ping", "-n", "-c", "1", "-W", str(max(1, int(timeout))), ip],
++                           capture_output=True, timeout=timeout + 3)
++        return round((time.monotonic() - t0) * 1000, 1) if r.returncode == 0 else None
++    except (OSError, subprocess.SubprocessError):
++        return None
++
++
++def tcp(ip, porta, timeout=5.0, portas_locais=None):
++    """('aberta'|'recusada'|'timeout'|'erro:<errno>', ms). A porta local usada
++    vai para `portas_locais`, para a sonda nao aparecer como conexao do cliente."""
++    t0 = time.monotonic()
++    try:
++        s = socket.create_connection((ip, porta), timeout)
++        if portas_locais is not None:
++            portas_locais.append(s.getsockname()[1])
++            del portas_locais[:-20]
++        s.close()
++        r = "aberta"
++    except ConnectionRefusedError:
++        r = "recusada"
++    except (socket.timeout, TimeoutError):
++        r = "timeout"
++    except OSError as e:
++        r = f"erro:{e.errno}"
++    return r, round((time.monotonic() - t0) * 1000)
++
++
++def http_data(ip, timeout=8.0):
++    """(status, Date do CPE em epoch) do GET /. O CPE tem hora da rede LTE;
++    a Pi nao. E' a referencia para corrigir o relogio dos registros."""
++    c = http.client.HTTPConnection(ip, 80, timeout=timeout)
++    try:
++        c.request("GET", "/", headers={"Connection": "close"})
++        r = c.getresponse()
++        r.read(4096)
++        data = r.getheader("Date")
++        epoch = None
++        if data:
++            try:
++                epoch = email.utils.parsedate_to_datetime(data).timestamp()
++            except (TypeError, ValueError):
++                epoch = None
++        return r.status, epoch
++    finally:
++        c.close()
++
++
++# --------------------------------------------------- arquivos do cliente ---
++
++class Seguidor:
++    """Segue um arquivo de texto como `tail -F`: devolve so as linhas novas.
++
++    Guarda os primeiros bytes do arquivo: se eles mudam, o arquivo foi
++    reescrito (truncado e regravado), mesmo que tenha crescido de novo.
++    """
++
++    CABECA = 64
++
++    def __init__(self, caminho, ino=None, pos=None, cabeca=None):
++        self.caminho, self.ino, self.pos = caminho, ino, pos
++        self.cabeca = cabeca                   # hex dos primeiros bytes
++
++    def _cabeca_atual(self):
++        try:
++            with open(self.caminho, "rb") as f:
++                return f.read(self.CABECA).hex()
++        except OSError:
++            return None
++
++    def novas(self, maximo=200):
++        try:
++            st = os.stat(self.caminho)
++        except OSError:
++            return []
++        cab = self._cabeca_atual()
++        if self.ino is None or self.pos is None:
++            # primeira vez: comeca do fim, o historico vai no evento "historico"
++            self.ino, self.pos, self.cabeca = st.st_ino, st.st_size, cab
++            return []
++        reescrito = self.cabeca is not None and cab is not None and \
++            not cab.startswith(self.cabeca[:len(cab)]) and not self.cabeca.startswith(cab)
++        if st.st_ino != self.ino or st.st_size < self.pos or reescrito:
++            self.ino, self.pos = st.st_ino, 0          # rodou, truncou ou reescreveu
++        self.cabeca = cab
++        if st.st_size == self.pos:
++            return []
++        with open(self.caminho, "rb") as f:
++            f.seek(self.pos)
++            bruto = f.read(256 * 1024)
++        fim = bruto.rfind(b"\n")
++        if fim < 0:
++            return []                                   # linha ainda incompleta
++        self.pos += fim + 1
++        linhas = bruto[:fim].decode("utf-8", "replace").splitlines()
++        if len(linhas) > maximo:
++            linhas = linhas[:maximo] + [f"... (+{len(linhas) - maximo} linhas)"]
++        return linhas
++
++
++def motivo_falha(caminho):
++    for linha in (ler(caminho, "") or "").splitlines():
++        if linha.startswith("Motivo:"):
++            return linha[len("Motivo:"):].strip()[:300]
++    return None
++
++
++class VigiaFalhas:
++    """Arquivos novos em logs_failure. So relista quando o mtime da pasta muda:
++    a 106 chegou a ter dezenas de milhares de arquivos ali.
++
++    Entre execucoes guarda so o maior nome visto: os nomes sao
++    falha_AAAA-MM-DD_HH-MM-SS.txt e ordenam no tempo da Pi.
++    """
++
++    def __init__(self, pasta, mtime=None, ultimo=None):
++        self.pasta = pasta
++        self.mtime = mtime
++        self.ultimo = ultimo
++        self.vistos = None
++
++    def novos(self):
++        try:
++            m = os.stat(self.pasta).st_mtime
++        except OSError:
++            return []
++        if self.vistos is not None and m == self.mtime:
++            return []
++        try:
++            nomes = set(os.listdir(self.pasta))
++        except OSError:
++            return []
++        self.mtime = m
++        if self.vistos is None:
++            novos = sorted(n for n in nomes if self.ultimo and n > self.ultimo)
++        else:
++            novos = sorted(nomes - self.vistos)
++        self.vistos = nomes
++        if nomes:
++            self.ultimo = max(nomes)
++        return [(n, motivo_falha(os.path.join(self.pasta, n))) for n in novos]
++
++
++def historico(cfg, maximo_linhas=200, maximo_falhas=50):
++    """Foto do que ja existia na primeira vez que o agente roda."""
++    log = os.path.join(cfg["base"], "router.log")
++    linhas = (ler(log, "") or "").splitlines()
++    falhas = []
++    try:
++        nomes = sorted(os.listdir(cfg["logs_failure"]))
++    except OSError:
++        nomes = []
++    for n in nomes[-maximo_falhas:]:
++        p = os.path.join(cfg["logs_failure"], n)
++        try:
++            mt = os.stat(p).st_mtime
++        except OSError:
++            mt = None
++        falhas.append({"arquivo": n, "mtime": mt, "motivo": motivo_falha(p)})
++    return {"router_log_total_linhas": len(linhas),
++            "router_log_fim": linhas[-maximo_linhas:],
++            "logs_failure_total": len(nomes),
++            "logs_failure_recentes": falhas}
++
++
++# --------------------------------------------------------------- registro ---
++
++class Registro:
++    """JSONL com fsync por linha e rotacao por tamanho."""
++
++    def __init__(self, pasta, rotacao_mb=20, manter=100):
++        self.pasta = pasta
++        self.limite = int(rotacao_mb) * 1024 * 1024
++        self.manter = int(manter)
++        os.makedirs(pasta, exist_ok=True)
++        self.atual = os.path.join(pasta, "atual.jsonl")
++
++    def grava(self, reg):
++        linha = json.dumps(reg, ensure_ascii=False, separators=(",", ":")) + "\n"
++        with open(self.atual, "a", encoding="utf-8") as f:
++            f.write(linha)
++            f.flush()
++            os.fsync(f.fileno())
++        if os.path.getsize(self.atual) > self.limite:
++            self._roda()
++
++    def _roda(self):
++        nome = os.path.join(self.pasta, time.strftime("cp-%Y%m%d-%H%M%S.jsonl"))
++        while os.path.exists(nome):
++            nome = nome.replace(".jsonl", "_.jsonl")
++        os.replace(self.atual, nome)
++        antigos = sorted(glob.glob(os.path.join(self.pasta, "cp-*.jsonl")),
++                         key=os.path.getmtime)
++        for p in antigos[:-self.manter] if self.manter else []:
++            try:
++                os.unlink(p)
++            except OSError:
++                pass
++
++
++def carrega_estado(caminho):
++    try:
++        with open(caminho) as f:
++            return json.load(f)
++    except (OSError, ValueError):
++        return {}
++
++
++def salva_estado(caminho, estado):
++    os.makedirs(os.path.dirname(caminho), exist_ok=True)
++    tmp = caminho + ".tmp"
++    with open(tmp, "w") as f:
++        json.dump(estado, f)
++        f.flush()
++        os.fsync(f.fileno())
++    os.replace(tmp, caminho)
++
++
++# ------------------------------------------------------------------ agente ---
++
++class Agente:
++    def __init__(self, cfg, registro=None, agora=time.time, mono=time.monotonic):
++        self.cfg = cfg
++        self.agora, self.mono = agora, mono
++        self.reg = registro or Registro(cfg["saida"], cfg["rotacao_mb"], cfg["manter_arquivos"])
++        self.estado = carrega_estado(cfg["estado"])
++        rl = self.estado.get("router_log", {})
++        self.router = Seguidor(os.path.join(cfg["base"], "router.log"),
++                               rl.get("ino"), rl.get("pos"), rl.get("cabeca"))
++        lf = self.estado.get("logs_failure", {})
++        self.falhas = VigiaFalhas(cfg["logs_failure"], lf.get("mtime"), lf.get("ultimo"))
++        self.boot = boot_id(cfg["proc"])
++        self.ant = {}
++        self.ultimo = {"cpe_tcp": -1e9, "cpe_http": -1e9, "servidor": -1e9, "vcgencmd": -1e9}
++        self.throttled_cache = None
++        self.fila_presa = 0
++        self.fila_avisada = False
++        self.portas_sonda = []
++
++    # -- registro
++    def _base(self, tipo):
++        return {"tipo": tipo, "t": round(self.agora(), 1), "mono": round(self.mono(), 1),
++                "boot": self.boot[:8], "cam": self.cfg["camera"]}
++
++    def evento(self, nome, **dados):
++        r = self._base("evento")
++        r["ev"] = nome
++        r.update(dados)
++        self.reg.grava(r)
++        # tambem no journal (persistente): redundancia barata
++        print(json.dumps(r, ensure_ascii=False), flush=True)
++
++    # -- partida
++    def inicio(self):
++        cfg = self.cfg
++        self.evento("inicio", versao=VERSAO, pid=os.getpid(),
++                    cfg={k: cfg[k] for k in ("gateway", "wan", "servidor", "porta", "intervalo")})
++        ultimo_boot = self.estado.get("boot")
++        if ultimo_boot and ultimo_boot != self.boot:
++            self.evento("boot_novo", boot_anterior=ultimo_boot[:8],
++                        ultima_amostra_t=self.estado.get("ultima_t"),
++                        uptime_s=uptime_s(cfg["proc"]))
++        if not self.estado.get("historico_feito"):
++            self.evento("historico", **historico(cfg))
++            self.estado["historico_feito"] = True
++        # o que entrou nos arquivos enquanto o agente esteve fora (na primeira
++        # vez os seguidores so se posicionam no fim: o passado foi no "historico")
++        self._arquivos_do_cliente()
++
++    # -- um ciclo
++    def ciclo(self):
++        cfg, m = self.cfg, self.mono()
++        a = self._base("amostra")
++        a["up"] = uptime_s(cfg["proc"])
++        a["gw_ms"] = ping_ms(cfg["gateway"])
++        a["gw_arp"] = parse_arp(ler(os.path.join(cfg["proc"], "net/arp"), ""), cfg["gateway"])
++        a["wan_ms"] = ping_ms(cfg["wan"]) if cfg["wan"] else None
++        a["eth"] = interface(cfg["proc"], cfg["sys"], cfg["iface"])
++        a["conn"] = conexoes_servidor(cfg["proc"], cfg["servidor"], int(cfg["porta"]),
++                                      self.portas_sonda)
++        a["cliente"] = processos_cliente(cfg["proc"], cfg["padrao_cliente"])
++        a["sis"] = sistema(cfg["proc"], cfg["sys"])
++
++        usa_vcgencmd = m - self.ultimo["vcgencmd"] >= CADA_VCGENCMD
++        thr = throttled(cfg["sys"], vcgencmd_ok=usa_vcgencmd)
++        if thr is None and not usa_vcgencmd:
++            thr = self.throttled_cache
++        elif usa_vcgencmd:
++            self.ultimo["vcgencmd"] = m
++        self.throttled_cache = thr
++        a["sis"]["throttled"] = thr
++
++        if m - self.ultimo["cpe_tcp"] >= CADA_CPE_TCP:
++            self.ultimo["cpe_tcp"] = m
++            a["cpe80"] = tcp(cfg["gateway"], 80)
++        conectado = any(c["estado"] == "ESTABLISHED" for c in a["conn"])
++        if not conectado and m - self.ultimo["servidor"] >= CADA_SERVIDOR:
++            # Sonda o servidor so com o cliente desconectado: o servidor descarta
++            # conexao sem ID sem gravar linha, mas nao ha por que somar trafego.
++            self.ultimo["servidor"] = m
++            a["servidor"] = tcp(cfg["servidor"], int(cfg["porta"]),
++                                portas_locais=self.portas_sonda)
++
++        self.reg.grava(a)
++        self._transicoes(a, conectado)
++
++        if m - self.ultimo["cpe_http"] >= CADA_CPE_HTTP:
++            self.ultimo["cpe_http"] = m
++            try:
++                st, data = http_data(cfg["gateway"])
++                self.evento("relogio", http_status=st, cpe_date=data,
++                            offset_s=round(data - self.agora(), 1) if data else None)
++            except Exception as e:                       # noqa: BLE001 - so registra
++                self.evento("relogio", erro=repr(e)[:200])
++
++        self._arquivos_do_cliente()
++
++        self.estado.update(boot=self.boot, ultima_t=a["t"],
++                           router_log={"ino": self.router.ino, "pos": self.router.pos,
++                                       "cabeca": self.router.cabeca},
++                           logs_failure={"mtime": self.falhas.mtime,
++                                         "ultimo": self.falhas.ultimo})
++        salva_estado(cfg["estado"], self.estado)
++        return a
++
++    def _arquivos_do_cliente(self):
++        for linha in self.router.novas():
++            self.evento("router_log", linha=linha[:500])
++        for nome, motivo in self.falhas.novos():
++            self.evento("logs_failure", arquivo=nome, motivo=motivo)
++
++    def _transicoes(self, a, conectado):
++        ant = self.ant
++        if ant:
++            def muda(chave, novo, velho, ev_sim, ev_nao, **extra):
++                if bool(novo) != bool(velho):
++                    self.evento(ev_sim if novo else ev_nao, **extra)
++
++            muda("gw", a["gw_ms"] is not None, ant["gw_ms"] is not None,
++                 "gateway_voltou", "gateway_perdido", arp=a["gw_arp"])
++            if a["gw_arp"] != ant["gw_arp"]:
++                self.evento("arp_gateway", de=ant["gw_arp"], para=a["gw_arp"])
++            if self.cfg["wan"]:
++                muda("wan", a["wan_ms"] is not None, ant["wan_ms"] is not None,
++                     "wan_voltou", "wan_perdida")
++            if a["eth"].get("carrier") != ant["eth"].get("carrier"):
++                self.evento("cabo", de=ant["eth"].get("carrier"), para=a["eth"].get("carrier"))
++            if "cpe80" in a and "cpe80" in ant and a["cpe80"][0] != ant["cpe80"][0]:
++                self.evento("cpe_web", de=ant["cpe80"][0], para=a["cpe80"][0])
++            ec = sorted(c["estado"] for c in a["conn"])
++            ea = sorted(c["estado"] for c in ant["conn"])
++            if ec != ea:
++                self.evento("conexao_servidor", de=ea, para=ec, conn=a["conn"])
++            pa = {c["pid"] for c in ant["cliente"]}
++            pn = {c["pid"] for c in a["cliente"]}
++            for c in a["cliente"]:
++                if c["pid"] not in pa:
++                    self.evento("cliente_novo", **c)
++            for pid in sorted(pa - pn):
++                self.evento("cliente_sumiu", pid=pid)
++            if a["sis"].get("throttled") != ant["sis"].get("throttled") and a["sis"].get("throttled"):
++                self.evento("throttled", de=ant["sis"].get("throttled"), para=a["sis"]["throttled"])
++            if a["sis"].get("raiz_ro") and not ant["sis"].get("raiz_ro"):
++                self.evento("raiz_somente_leitura")
++            if a["sis"].get("ntp_sinc") != ant["sis"].get("ntp_sinc"):
++                self.evento("ntp", sincronizado=a["sis"].get("ntp_sinc"))
++            if "servidor" in a:
++                if a["servidor"][0] != (ant.get("ult_servidor") or [None])[0]:
++                    self.evento("sonda_servidor", resultado=a["servidor"])
++        else:
++            # primeira amostra desta execucao: o ponto de partida da linha do tempo
++            self.evento("estado_inicial", gw_ms=a["gw_ms"], gw_arp=a["gw_arp"],
++                        wan_ms=a["wan_ms"], cabo=a["eth"].get("carrier"),
++                        conn=a["conn"], cliente=a["cliente"],
++                        throttled=a["sis"].get("throttled"))
++        if "servidor" in a:
++            a["ult_servidor"] = a["servidor"]
++        elif ant.get("ult_servidor"):
++            a["ult_servidor"] = ant["ult_servidor"]
++        if "cpe80" not in a and "cpe80" in ant:
++            a["cpe80"] = ant["cpe80"]
++
++        # Fila presa: conectado, com bytes na fila de envio e o contador de
++        # bytes da placa parado. E' a assinatura de "o caminho morreu com a
++        # conexao ainda aberta" - o que antecede um Timeout no servidor.
++        presa = conectado and any(c["txq"] > 0 for c in a["conn"]) and \
++            ant and a["eth"].get("tx_bytes") is not None and \
++            a["eth"].get("tx_bytes", 0) - ant["eth"].get("tx_bytes", 0) < 2000
++        self.fila_presa = self.fila_presa + 1 if presa else 0
++        if self.fila_presa >= CICLOS_FILA_PRESA and not self.fila_avisada:
++            self.evento("fila_presa", ciclos=self.fila_presa, conn=a["conn"])
++            self.fila_avisada = True
++        elif not presa and self.fila_avisada:
++            self.evento("fila_destravou")
++            self.fila_avisada = False
++        self.ant = a
++
++    def laco(self):
++        self.inicio()
++        intervalo = float(self.cfg["intervalo"])
++        prox = self.mono()
++        while True:
++            try:
++                self.ciclo()
++            except Exception:                                # noqa: BLE001
++                try:
++                    self.evento("erro", tb=traceback.format_exc()[-1500:])
++                except Exception:                            # noqa: BLE001
++                    pass
++            prox += intervalo
++            espera = prox - self.mono()
++            if espera < 0:
++                prox = self.mono()
++                espera = 0
++            time.sleep(espera)
++
++
++# --------------------------------------------------------------- relatorio ---
++
++def le_registros(pasta):
++    arquivos = sorted(glob.glob(os.path.join(pasta, "cp-*.jsonl")), key=os.path.getmtime)
++    arquivos.append(os.path.join(pasta, "atual.jsonl"))
++    for p in arquivos:
++        try:
++            with open(p, encoding="utf-8", errors="replace") as f:
++                for linha in f:
++                    try:
++                        yield json.loads(linha)
++                    except ValueError:
++                        continue
++        except OSError:
++            continue
++
++
++def relatorio(pasta, horas=None, intervalo=30, saida=None):
++    """Linha do tempo: eventos, lacunas entre amostras e reboots, com hora da
++    Pi e hora real estimada. O offset usado em cada linha e' o da leitura de
++    relogio mais recente ate ali (o NTP pode acertar a Pi no meio do caminho);
++    antes da primeira leitura, vale a primeira."""
++    saida = saida or sys.stdout
++    regs = list(le_registros(pasta))
++    offsets = [r["offset_s"] for r in regs
++               if r.get("ev") == "relogio" and r.get("offset_s") is not None]
++    offset = offsets[0] if offsets else 0.0
++    if horas:
++        corte = max((r.get("t", 0) for r in regs), default=0) - horas * 3600
++        regs = [r for r in regs if r.get("t", 0) >= corte]
++
++    def hora(t):
++        return time.strftime("%d/%m %H:%M:%S", time.localtime(t))
++
++    final = offsets[-1] if offsets else 0.0
++    print(f"# {len(regs)} registros. Offset do relogio (Date do CPE - Pi): "
++          f"{final:+.0f} s = {final / 86400:+.2f} dias", file=saida)
++    print("# hora da Pi        | hora real estimada | evento", file=saida)
++    ultima = None
++    for r in regs:
++        t = r.get("t", 0)
++        if r.get("ev") == "relogio" and r.get("offset_s") is not None:
++            offset = r["offset_s"]
++        if r.get("tipo") == "amostra":
++            if ultima and ultima.get("boot") == r.get("boot") and \
++                    r.get("mono", 0) - ultima.get("mono", 0) > 3 * intervalo:
++                buraco = r["mono"] - ultima["mono"]
++                print(f"{hora(t)} | {hora(t + offset)} | LACUNA de {buraco:.0f} s sem "
++                      f"amostra (agente ou sistema parado)", file=saida)
++            ultima = r
++            continue
++        dados = {k: v for k, v in r.items()
++                 if k not in ("tipo", "t", "mono", "boot", "cam", "ev")}
++        texto = json.dumps(dados, ensure_ascii=False)
++        if len(texto) > 400:
++            texto = texto[:400] + "..."
++        print(f"{hora(t)} | {hora(t + offset)} | {r.get('ev')} {texto}", file=saida)
++    if ultima:
++        print(f"# ultima amostra: {hora(ultima['t'])} (Pi) / {hora(ultima['t'] + offset)} "
++              f"(real). gw={ultima.get('gw_ms')} conn="
++              f"{[c['estado'] for c in ultima.get('conn', [])]} "
++              f"cliente={[c['pid'] for c in ultima.get('cliente', [])]}", file=saida)
++
++
++# ----------------------------------------------------------------- entrada ---
++
++def monta_cfg(args):
++    cfg = dict(PADRAO)
++    cfg.update(le_conf(args.conf))
++    if args.camera:
++        cfg["camera"] = args.camera
++    for k in ("porta", "intervalo", "rotacao_mb", "manter_arquivos"):
++        cfg[k] = int(cfg[k])
++    if not cfg["wan"] and cfg["camera"]:
++        cfg["wan"] = f"192.168.10.{cfg['camera']}"
++    return cfg
++
++
++def main(argv=None):
++    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
++    ap.add_argument("--camera", default="")
++    ap.add_argument("--conf", default=CONF)
++    ap.add_argument("--uma", action="store_true", help="um ciclo, imprime e sai")
++    ap.add_argument("--relatorio", action="store_true")
++    ap.add_argument("--horas", type=float, default=None)
++    ap.add_argument("--dir", default=None, help="pasta dos registros (relatorio)")
++    args = ap.parse_args(argv)
++    cfg = monta_cfg(args)
++    if args.relatorio:
++        relatorio(args.dir or cfg["saida"], args.horas, cfg["intervalo"])
++        return 0
++    ag = Agente(cfg)
++    if args.uma:
++        ag.inicio()
++        print(json.dumps(ag.ciclo(), indent=1, ensure_ascii=False))
++        return 0
++    ag.laco()
++    return 0
++
++
++if __name__ == "__main__":
++    sys.exit(main())
+diff --git a/deploy/rasp/camera-client.service b/deploy/rasp/camera-client.service
+index 2de15cd..20cb22c 100644
+--- a/deploy/rasp/camera-client.service
++++ b/deploy/rasp/camera-client.service
+@@ -10,6 +10,9 @@ WorkingDirectory=/home/pi/Desktop/Porto_de_Santos_2025/PRINCIPAL
+ ExecStart=/usr/bin/python3 /home/pi/Desktop/Porto_de_Santos_2025/PRINCIPAL/2026_02_05_Cliente_H01.py
+ Restart=always
+ RestartSec=10
++# Sem isto o print do python fica no buffer e se perde quando o processo
++# morre - justamente o traceback que explicaria a morte (14/10/2026).
++Environment=PYTHONUNBUFFERED=1
+ # stdout/stderr vao para o journal: journalctl -u camera-client -f
+ StandardOutput=journal
+ StandardError=journal
+diff --git a/deploy/rasp/instalar_caixa_preta.sh b/deploy/rasp/instalar_caixa_preta.sh
+new file mode 100644
+index 0000000..f6c55fe
+--- /dev/null
++++ b/deploy/rasp/instalar_caixa_preta.sh
+@@ -0,0 +1,70 @@
++#!/bin/bash
++# Instala a caixa-preta numa Rasp de camera. NAO mexe no cliente: so observa.
++#
++# Uso (na Rasp, dentro da pasta onde estao estes arquivos):
++#   sudo bash instalar_caixa_preta.sh 102
++#   sudo bash instalar_caixa_preta.sh 105            # gateway detectado sozinho
++#
++# Pode ser rodado de novo sem estrago: atualiza o script e reinicia o servico,
++# e o estado (onde parou de ler o router.log) e os registros sao preservados.
++set -euo pipefail
++HERE="$(cd "$(dirname "$0")" && pwd)"
++CAM="${1:-}"
++
++[ "$(id -u)" -eq 0 ] || { echo "ERRO: rode com sudo"; exit 1; }
++[[ "$CAM" =~ ^[0-9]{3}$ ]] || { echo "ERRO: informe a camera, ex.: sudo bash $0 102"; exit 1; }
++for f in caixa_preta.py caixa-preta.service journald-persistente.conf; do
++    [ -f "$HERE/$f" ] || { echo "ERRO: falta $f ao lado do instalador"; exit 1; }
++done
++
++# O gateway e' a LAN do proprio CPE: .254 na Elsys, .1 no Teltonika.
++GW="$(ip route show default 2>/dev/null | awk '/^default/ {print $3; exit}')"
++[ -n "$GW" ] || GW=192.168.11.254
++echo "== camera $CAM, gateway $GW =="
++
++echo "== 1. journal persistente =="
++mkdir -p /var/log/journal /etc/systemd/journald.conf.d
++cp "$HERE/journald-persistente.conf" /etc/systemd/journald.conf.d/caixa-preta.conf
++systemd-tmpfiles --create --prefix /var/log/journal >/dev/null 2>&1 || true
++systemctl restart systemd-journald
++journalctl --list-boots 2>/dev/null | tail -3 || true
++
++echo "== 2. agente =="
++mkdir -p /opt/caixa-preta /var/log/caixa-preta /var/lib/caixa-preta
++install -m 0755 "$HERE/caixa_preta.py" /opt/caixa-preta/caixa_preta.py
++if [ -f /etc/caixa-preta.conf ]; then
++    cp /etc/caixa-preta.conf "/etc/caixa-preta.conf.$(date +%s).bak"
++fi
++cat > /etc/caixa-preta.conf <<EOF
++# Gerado por instalar_caixa_preta.sh. Chaves validas: ver PADRAO em caixa_preta.py
++camera = $CAM
++gateway = $GW
++EOF
++
++echo "== 3. servico =="
++cp "$HERE/caixa-preta.service" /etc/systemd/system/caixa-preta.service
++systemctl daemon-reload
++systemctl enable caixa-preta.service >/dev/null
++systemctl restart caixa-preta.service
++
++echo "== 4. conferindo (40 s) =="
++sleep 40
++systemctl is-active caixa-preta.service
++python3 /opt/caixa-preta/caixa_preta.py --relatorio --horas 1 | tail -15
++
++cat <<'EOF'
++
++PRONTO. O que foi instalado:
++  /opt/caixa-preta/caixa_preta.py          o agente
++  /etc/caixa-preta.conf                    camera e gateway
++  /var/log/caixa-preta/*.jsonl             os registros
++  /etc/systemd/journald.conf.d/            journal persistente
++
++Ler depois de uma queda:
++  python3 /opt/caixa-preta/caixa_preta.py --relatorio            # tudo
++  python3 /opt/caixa-preta/caixa_preta.py --relatorio --horas 6  # ultimas 6 h
++  journalctl -u caixa-preta --since "-6h"
++  journalctl -k --since "-6h"                                    # kernel
++
++Copiar para analise:  tar czf ~/caixa-preta-$(hostname).tgz /var/log/caixa-preta
++EOF
+diff --git a/deploy/rasp/install_camera_client.sh b/deploy/rasp/install_camera_client.sh
+index 5c6d7ef..dfbc7ae 100644
+--- a/deploy/rasp/install_camera_client.sh
++++ b/deploy/rasp/install_camera_client.sh
+@@ -7,6 +7,21 @@ CLIENT=/home/pi/Desktop/Porto_de_Santos_2025/PRINCIPAL/2026_02_05_Cliente_H01.py
+ 
+ [ -f "$CLIENT" ] || { echo "ERRO: $CLIENT nao existe nesta Rasp"; exit 1; }
+ 
++PRINCIPAL="$(dirname "$CLIENT")"
++
++# Sob systemd nao ha sessao grafica: o watchdog_test.py original abre o Chrome
++# sem --headless e falharia sempre - e, falhando, mata o cliente (F7). O do
++# repositorio e' headless e blindado. O original fica guardado ao lado.
++echo "== watchdog_test.py (blindado, headless, com hora no router.log) =="
++if [ -f "$PRINCIPAL/watchdog_test.py" ] && ! grep -q "Nunca levanta excecao" "$PRINCIPAL/watchdog_test.py"; then
++    cp -p "$PRINCIPAL/watchdog_test.py" "$PRINCIPAL/watchdog_test.py.original-$(date +%Y%m%d%H%M%S)"
++fi
++install -o pi -g pi -m 0644 "$HERE/watchdog_test.py" "$PRINCIPAL/watchdog_test.py"
++if [ ! -f "$PRINCIPAL/router.conf" ] && ip route show default | grep -q "192.168.11.1 "; then
++    echo "AVISO: o gateway e' 192.168.11.1 (Teltonika). Crie $PRINCIPAL/router.conf"
++    echo "       com modelo/usuario/senha antes de iniciar o servico (ver watchdog_test.py)."
++fi
++
+ echo "== unit systemd =="
+ cp "$HERE/camera-client.service" /etc/systemd/system/camera-client.service
+ systemctl daemon-reload
+@@ -23,4 +38,5 @@ echo "PRONTO. Agora, NA MAO (para nao matar uma transmissao em andamento):"
+ echo "  1. pare o cliente que roda em sessao manual (Ctrl+C no terminal/VNC)"
+ echo "  2. sudo systemctl start camera-client"
+ echo "  3. confira: systemctl status camera-client ; journalctl -u camera-client -f"
++echo "     e no PC do SPA: CONNECT da camera no LOG_connections.txt em ate ~20 s"
+ echo "  4. confira o relogio: timedatectl   (Synchronized deve virar yes em ~1 min)"
+diff --git a/deploy/rasp/journald-persistente.conf b/deploy/rasp/journald-persistente.conf
+new file mode 100644
+index 0000000..f00eb62
+--- /dev/null
++++ b/deploy/rasp/journald-persistente.conf
+@@ -0,0 +1,6 @@
++# /etc/systemd/journald.conf.d/caixa-preta.conf
++# Journal em disco: sobrevive ao reboot, que e' quando ele mais importa.
++# A 102 ja tinha /var/log/journal (14/10/2026); isto garante nas outras.
++[Journal]
++Storage=persistent
++SystemMaxUse=2G
+diff --git a/docs/diario/2026-10-14-sessao.md b/docs/diario/2026-10-14-sessao.md
+new file mode 100644
+index 0000000..eeaceca
+--- /dev/null
++++ b/docs/diario/2026-10-14-sessao.md
+@@ -0,0 +1,69 @@
++# Diário — 14/10/2026
++
++A 102 voltou depois de 50 dias fora. A equipe no porto tirou e recolocou o cabo
++de rede do CPE dela, e a câmera voltou a mandar imagem. A saída coletada na Pi
++logo depois responde a pergunta aberta desde 24/08, e corrige em parte a
++leitura de 09/09.
++
++## 1. O que a Pi mostrou
++
++| Dado | Valor | Leitura |
++|---|---|---|
++| `uptime -s` | 2026-07-11 19:46 (relógio da Pi) | **a Pi nunca reiniciou**: 54 dias ligada, incluindo os 50 sem imagem |
++| última linha do `router.log` | `Erro ao reiniciar o roteador: ... Chrome failed to start: exited normally. (DevToolsActivePort file doesn't exist)` | o gatilho do **F7**: no `watchdog_test.py` original o `except` chama `driver.quit()` com `driver` inexistente e o cliente morre |
++| último `logs_failure` | `falha_2026-07-15_03-32-36.txt` | com a defasagem abaixo, **24/08 04:37** — o minuto em que a 102 parou |
++| `dmesg` | `eth0: Link is Down` 07:48:54 → `Up` 07:49:15 | o cabo fora por 21 s; o CPE **não** reiniciou |
++| processo do cliente | início 08:02:58 (relógio da Pi) | nasceu **14 min depois** do cabo; alguém (ou algo) o iniciou |
++| `throttled` | `0x0` | sem subtensão |
++| ARP do gateway | `f8:80:96:05:99:73 REACHABLE` | a Elsys da 102 responde na LAN |
++| journal | persistente, 5 boots desde abril | o histórico de 54 dias está guardado |
++
++### A defasagem do relógio, fechada
++
++O servidor viu o último frame da 102 em 24/08 04:37:20. O último arquivo de
++falha do cliente é de 15/07 03:32:36 no relógio da Pi. Diferença: **40 d 1 h
++04 min 44 s**. Aplicada ao `date` da Pi no momento da coleta (04/09 08:08:24),
++dá 14/10 09:13 — a hora em que a saída foi enviada. A conta fecha nas duas
++pontas.
++
++Convertidos: cabo fora às 08:53:39 (real), cliente iniciado às 09:07:43 (real).
++
++## 2. O que muda na leitura de 09/09
++
++09/09 concluiu "Pi ou cliente morto atrás de um CPE vivo — família 8". A Pi
++estava viva; o que morreu foi o **cliente** — família 3 da tabela de
++25/08 (processo do cliente morreu), pelo mecanismo do F7 previsto em 27/08.
++A suspeita sobre a Elsys perde força para a 102: ela respondia na LAN e o cabo
++só ficou 21 s fora.
++
++Falta confirmar quem iniciou o cliente às 09:07: se foi à mão pelo VNC, o
++cabo foi coincidência e o que trouxe a 102 de volta foi o cliente novo. Se
++houver um autostart desconhecido, a explicação muda. O comando que decide está
++no runbook da caixa-preta (o processo pai do cliente).
++
++## 3. Entregue
++
++- `deploy/rasp/caixa_preta.py` — agente stdlib que registra a cada 30 s rede
++  vista de dentro (gateway, ARP, WAN do CPE, conexão com o servidor e a fila de
++  envio), processos do cliente, sistema e relógio (Date do CPE), mais as linhas
++  novas do `router.log` e os arquivos novos de `logs_failure`. `--relatorio`
++  imprime a linha do tempo com a hora real estimada.
++- `deploy/rasp/caixa-preta.service`, `journald-persistente.conf`,
++  `instalar_caixa_preta.sh` — nível 1, só observação.
++- `camera-client.service` com `PYTHONUNBUFFERED=1` e `install_camera_client.sh`
++  instalando o `watchdog_test.py` blindado e headless — nível 2. Sem isso o
++  serviço rodaria o watchdog original, que abre o Chrome sem `--headless` e
++  falharia sempre sem sessão gráfica.
++- `docs/runbooks/caixa-preta.md` — instalação pelo VNC e leitura pós-queda.
++- `tests/test_caixa_preta.py` — 16 testes.
++
++## 4. Pendências
++
++| O quê | Estado |
++|---|---|
++| Quem iniciou o cliente da 102 às 09:07 | perguntar à equipe / processo pai |
++| `cat` do `falha_2026-07-15_03-32-36.txt` (linha `Motivo:`) | pedido |
++| Hora da reconexão da 102 no `LOG_connections.txt` (≈09:07 confirma) | pedido |
++| Nível 1 na 102 | pronto para instalar |
++| Nível 2 na 102 | decisão do time |
++| 106 | segue fora; mesmo procedimento quando houver acesso |
+diff --git a/docs/runbooks/caixa-preta.md b/docs/runbooks/caixa-preta.md
+new file mode 100644
+index 0000000..5795871
+--- /dev/null
++++ b/docs/runbooks/caixa-preta.md
+@@ -0,0 +1,133 @@
++# Runbook — caixa-preta nas Rasps das câmeras
++
++Objetivo: se uma câmera cair de novo, ter registrado **o que aconteceu, em que
++ordem e a que horas**, sem depender de alguém reconstruir à mão.
++
++## Por que agora (14/10/2026)
++
++A 102 voltou depois de 50 dias fora. A saída coletada nela mostrou:
++
++- a Pi ficou ligada o tempo todo (`up 54 days`, desde 11/07 no relógio dela);
++- a última linha do `router.log` é `Erro ao reiniciar o roteador: ... Chrome
++  failed to start` — o gatilho do **F7**, que mata o cliente;
++- o último `logs_failure` (`falha_2026-07-15_03-32-36.txt`, relógio da Pi) cai,
++  com a defasagem de 40 d 1 h 04 min 44 s, em **24/08 04:37** — o minuto em
++  que a 102 parou de entregar imagem;
++- o cliente atual nasceu 14 min depois de o cabo do CPE ser desconectado e
++  reconectado (cabo fora por 21 s; o CPE não foi reiniciado).
++
++O que faltou para fechar o caso sem dedução: o **erro do cliente** quando ele
++morreu (roda num terminal, o erro some), a **hora** de cada linha do
++`router.log`, e o **estado da rede vista de dentro da Pi** no momento da queda.
++
++## O que cada peça registra
++
++| Peça | Onde fica | O que responde |
++|---|---|---|
++| `caixa_preta.py` (nível 1) | `/var/log/caixa-preta/*.jsonl` | gateway e CPE respondem? conexão com o servidor aberta? bytes saindo ou presos na fila? cliente vivo, desde quando? throttled, temperatura, boot, relógio |
++| journal persistente (nível 1) | `/var/log/journal` | kernel (cartão SD, subtensão, rede), reinícios, os eventos da caixa-preta em duplicata |
++| cliente sob systemd (nível 2) | `journalctl -u camera-client` | **o traceback do cliente quando ele morre**; reinício automático em 10 s |
++| `watchdog_test.py` do repositório (nível 2) | `router.log` | **hora em cada linha**; o F7 deixa de matar o cliente |
++
++## Nível 1 — só observar (sem risco, fazer já)
++
++Não toca no cliente nem na transmissão. Pode ser feito com a câmera no ar.
++
++1. **Copiar** o pacote `caixa-preta-AAAA-MM-DD.zip` para a Rasp. Pelo VNC:
++   no RealVNC Viewer, botão de transferência de arquivos → enviar para
++   `/home/pi`. Na Rasp: `cd ~ && unzip caixa-preta-*.zip` (cria
++   `/home/pi/caixa-preta/`). Sem o pacote, copiar de `deploy/rasp/` pelo menos
++   `caixa_preta.py`, `caixa-preta.service`, `journald-persistente.conf` e
++   `instalar_caixa_preta.sh` para essa pasta.
++2. **Instalar** (num terminal da Rasp):
++   ```bash
++   cd /home/pi/caixa-preta
++   sudo bash instalar_caixa_preta.sh 102
++   ```
++   O gateway é detectado sozinho pela rota padrão (`.254` Elsys, `.1` Teltonika).
++3. **Conferir**: o fim da saída mostra `active` e as primeiras linhas do
++   relatório — `inicio`, `historico` (o fim do `router.log` e os últimos
++   `logs_failure`, guardados de uma vez), `estado_inicial` (conexão
++   `ESTABLISHED` e o PID do cliente) e `relogio` (com `offset_s` perto de
++   +3 460 000 s, os ~40 dias de atraso).
++
++Ordem: **102 agora**; 105 quando houver janela; 106 quando ela voltar.
++
++## Nível 2 — cliente sob systemd (recomendado; decisão do time)
++
++Muda como o cliente roda. Ganho: o erro que mata o cliente fica gravado, o
++cliente volta sozinho em 10 s, e o F7 deixa de existir. Custo: uma
++interrupção de segundos ao trocar o cliente manual pelo serviço.
++
++**Antes**, descobrir como o cliente de hoje é iniciado — se houver um
++autostart, ele e o serviço subiriam dois clientes com o mesmo ID no próximo
++boot:
++
++```bash
++P=$(pgrep -f Cliente_H01 | head -1); ps -o pid,ppid,lstart,cmd -p $P
++ps -o pid,lstart,cmd -p $(ps -o ppid= -p $P)
++ls ~/.config/autostart 2>/dev/null; crontab -l 2>/dev/null; tail -5 ~/.bashrc
++```
++
++Se aparecer um autostart (arquivo em `~/.config/autostart`, linha no
++`.bashrc` ou no crontab), desativar **esse** antes. Depois:
++
++```bash
++cd /home/pi/caixa-preta
++sudo bash install_camera_client.sh        # instala o serviço e o watchdog_test.py blindado
++# parar o cliente manual: Ctrl+C na janela dele (ou: kill $(pgrep -f Cliente_H01))
++sudo systemctl start camera-client
++journalctl -u camera-client -f            # "Conectado ao servidor..."
++```
++
++No PC do SPA: `CONNECT` da câmera no `LOG_connections.txt` em até ~20 s.
++O `watchdog_test.py` original fica guardado como `watchdog_test.py.original-*`.
++
++Na 105 (Teltonika) o `router.conf` com modelo, usuário e senha precisa existir
++antes — o instalador avisa. A 105 já tem uma cópia blindada própria; conferir
++com o time antes de trocar.
++
++## Do lado do PC do SPA
++
++- O monitor precisa estar no ar para o lado do servidor da linha do tempo
++  (`LOG_connections.txt`, frames por minuto). A tarefa agendada nunca foi
++  registrada e isso custou 53 h de silêncio em 28/08:
++  `.\deploy\pc\install_monitor_task.ps1` como Administrador.
++- O relógio do PC está certo: é a referência para cruzar com a Pi.
++
++## Depois de uma queda: o que coletar
++
++Na Rasp, **antes de reiniciar qualquer coisa**:
++
++```bash
++python3 /opt/caixa-preta/caixa_preta.py --relatorio --horas 12 > ~/queda.txt
++journalctl -u camera-client --since "-12h" >> ~/queda.txt     # nível 2
++journalctl -k --since "-12h" >> ~/queda.txt
++tail -80 ~/Desktop/Porto_de_Santos_2025/PRINCIPAL/router.log >> ~/queda.txt
++tar czf ~/caixa-preta-$(hostname).tgz /var/log/caixa-preta ~/queda.txt
++```
++
++E no PC: as linhas da câmera no `LOG_connections.txt` na mesma janela.
++
++O relatório imprime cada evento com a hora da Pi e a **hora real estimada**
++(pelo último `offset_s` do evento `relogio`), para cruzar direto com o PC.
++
++## Como ler os eventos
++
++| O relatório mostra | Leitura provável |
++|---|---|
++| `router_log` "Erro ao reiniciar..." seguido de `cliente_sumiu` | **F7**: o cliente morreu ao tentar reiniciar o roteador |
++| `cliente_sumiu` sem nada no `router_log` | o cliente morreu por outro motivo; ver o traceback no `journalctl -u camera-client` |
++| `cabo` 1 → 0 e `gateway_perdido` | cabo ou energia do CPE |
++| `gateway` ok, `wan_perdida`, `conexao_servidor` fecha | o CPE está vivo na LAN mas perdeu o rádio/LTE |
++| `gateway` ok, `wan` ok, conexão fecha, `sonda_servidor` timeout | caminho depois do CPE: eNodeB, CPE do SPA ou servidor |
++| `fila_presa` | conexão aberta, mas os bytes não saem: o enlace morreu com a conexão aberta (vira `Timeout` no servidor) |
++| `arp_gateway` ok → incompleta, com o cabo ligado | **o CPE travou do lado da LAN** — a hipótese da Elsys |
++| `LACUNA de N s sem amostra` | a própria Pi parou (travamento, I/O do cartão) |
++| `boot_novo` | a Pi reiniciou; `ultima_amostra_t` diz quando ela parou |
++| `throttled` diferente de `0x0` | subtensão ou temperatura |
++
++## Volume
++
++~2–3 MB por dia por câmera. Arquivos de 20 MB, mantidos os 100 mais novos
++(~2 GB, mais de dois anos). A 102 tem 306 GB livres.
+diff --git a/tests/test_caixa_preta.py b/tests/test_caixa_preta.py
+new file mode 100644
+index 0000000..322a738
+--- /dev/null
++++ b/tests/test_caixa_preta.py
+@@ -0,0 +1,286 @@
++"""Testes da caixa-preta da Rasp (deploy/rasp/caixa_preta.py).
++
++Tudo roda sobre um /proc e um /sys falsos montados em tmp_path: o agente le
++os arquivos por caminho configuravel justamente para isto. As linhas de
++/proc/net/tcp e /proc/net/arp seguem o formato do kernel 6.6 da 102.
++"""
++import importlib.util
++import json
++import os
++from pathlib import Path
++
++CP_PATH = Path("deploy/rasp/caixa_preta.py")
++
++
++def _mod():
++    spec = importlib.util.spec_from_file_location("caixa_preta", CP_PATH)
++    m = importlib.util.module_from_spec(spec)
++    spec.loader.exec_module(m)
++    return m
++
++
++cp = _mod()
++
++# 192.168.11.102:41022 -> 192.168.10.101:55000, ESTABLISHED, 0x1F40 bytes na fila
++TCP_HDR = ("  sl  local_address rem_address   st tx_queue rx_queue tr tm->when "
++           "retrnsmt   uid  timeout inode\n")
++LINHA_CLIENTE = ("   0: 660BA8C0:A03E 650AA8C0:D6D8 01 00001F40:00000000 01:00000014 "
++                 "00000003  1000        0 12345 1 0000000000000000 20 4 30 10 -1\n")
++LINHA_OUTRA = ("   1: 0100007F:1F90 00000000:0000 0A 00000000:00000000 00:00000000 "
++               "00000000     0        0 999 1 0000000000000000 100 0 0 10 0\n")
++ARP = ("IP address       HW type     Flags       HW address            Mask     Device\n"
++       "192.168.11.254   0x1         0x2         f8:80:96:05:99:73     *        eth0\n"
++       "192.168.11.9     0x1         0x0         00:00:00:00:00:00     *        eth0\n")
++
++
++def _proc(tmp_path, tcp=TCP_HDR + LINHA_CLIENTE + LINHA_OUTRA, arp=ARP):
++    proc = tmp_path / "proc"
++    (proc / "net").mkdir(parents=True)
++    (proc / "sys/kernel/random").mkdir(parents=True)
++    (proc / "sys/kernel/random/boot_id").write_text("93c03fdc-ac06-4c47-a11f-afec8ee00891\n")
++    (proc / "uptime").write_text("4710060.00 100.00\n")
++    (proc / "net/tcp").write_text(tcp)
++    (proc / "net/arp").write_text(arp)
++    (proc / "net/dev").write_text(
++        "Inter-|   Receive |  Transmit\n face |bytes packets errs drop fifo frame "
++        "compressed multicast|bytes packets errs drop fifo colls carrier compressed\n"
++        "  eth0: 1235012420 18095490 0 0 0 0 0 0 50155161370 34338829 0 0 0 0 0 0\n")
++    (proc / "loadavg").write_text("0.26 0.20 0.13 1/300 2727233\n")
++    (proc / "meminfo").write_text("MemTotal: 7900000 kB\nMemAvailable: 7300000 kB\n")
++    (proc / "mounts").write_text("/dev/mmcblk0p2 / ext4 rw,noatime 0 0\n")
++    sysfs = tmp_path / "sys"
++    (sysfs / "class/net/eth0").mkdir(parents=True)
++    (sysfs / "class/net/eth0/carrier").write_text("1\n")
++    (sysfs / "class/net/eth0/operstate").write_text("up\n")
++    (sysfs / "class/thermal/thermal_zone0").mkdir(parents=True)
++    (sysfs / "class/thermal/thermal_zone0/temp").write_text("45200\n")
++    return proc, sysfs
++
++
++def _cliente(proc, pid=2727233, inicio_ticks=470973000, nome="2026_02_05_Cliente_H01.py"):
++    d = proc / str(pid)
++    d.mkdir()
++    (d / "cmdline").write_bytes(
++        b"python3\0/home/pi/Desktop/Porto_de_Santos_2025/PRINCIPAL/" + nome.encode() + b"\0")
++    campos = ["S", "2727000"] + ["0"] * 15 + ["7", "0", str(inicio_ticks)] + ["0"] * 10
++    (d / "stat").write_text(f"{pid} (python3) " + " ".join(campos) + "\n")
++    (d / "statm").write_text("30000 33000 2000 1 0 20000 0\n")
++
++
++# ------------------------------------------------------------- leitura ---
++
++def test_proc_net_tcp_decodifica_ip_porta_estado_e_fila():
++    c = cp.parse_proc_net_tcp(TCP_HDR + LINHA_CLIENTE)[0]
++    assert c["local"] == "192.168.11.102:41022"
++    assert (c["remoto_ip"], c["remoto_porta"]) == ("192.168.10.101", 55000)
++    assert c["estado"] == "ESTABLISHED"
++    assert c["txq"] == 8000 and c["rxq"] == 0 and c["retr"] == 3
++
++
++def test_conexoes_servidor_filtra_destino_e_ignora_porta_da_sonda(tmp_path):
++    proc, _ = _proc(tmp_path)
++    assert len(cp.conexoes_servidor(str(proc), "192.168.10.101", 55000)) == 1
++    assert cp.conexoes_servidor(str(proc), "192.168.10.101", 55000, [41022]) == []
++
++
++def test_arp_distingue_completa_incompleta_e_ausente():
++    assert cp.parse_arp(ARP, "192.168.11.254") == "ok"
++    assert cp.parse_arp(ARP, "192.168.11.9") == "incompleta"
++    assert cp.parse_arp(ARP, "192.168.11.1") is None
++
++
++def test_interface_le_cabo_e_contadores(tmp_path):
++    proc, sysfs = _proc(tmp_path)
++    d = cp.interface(str(proc), str(sysfs), "eth0")
++    assert d["carrier"] == "1" and d["operstate"] == "up"
++    assert d["tx_bytes"] == 50155161370 and d["rx_bytes"] == 1235012420
++
++
++def test_processo_do_cliente_com_idade_e_memoria(tmp_path):
++    proc, _ = _proc(tmp_path)
++    _cliente(proc)
++    _cliente(proc, pid=4242, nome="caixa_preta.py")     # o proprio agente nao conta
++    (proc / "77").mkdir()
++    (proc / "77" / "cmdline").write_bytes(b"/usr/lib/chromium/chromium\0--headless\0")
++    out = cp.processos_cliente(str(proc), "Cliente", eu=1)
++    assert [c["pid"] for c in out] == [2727233]
++    hz = os.sysconf("SC_CLK_TCK")
++    assert out[0]["idade_s"] == round(4710060 - 470973000 / hz)
++    assert out[0]["ppid"] == 2727000 and out[0]["estado"] == "S"
++    assert out[0]["rss_mb"] > 0
++
++
++def test_motivo_e_historico(tmp_path):
++    base, lf = tmp_path / "base", tmp_path / "lf"
++    base.mkdir()
++    lf.mkdir()
++    (base / "router.log").write_text("reinicializando roteador\n"
++                                    "Erro ao reiniciar o roteador: Chrome failed to start\n")
++    (lf / "falha_2026-07-15_03-32-36.txt").write_text(
++        "Data/Hora da falha: 2026-07-15 03:32:36\nMotivo: timed out\n")
++    h = cp.historico({"base": str(base), "logs_failure": str(lf)})
++    assert h["router_log_fim"][-1].startswith("Erro ao reiniciar")
++    assert h["logs_failure_recentes"][0]["motivo"] == "timed out"
++
++
++# ------------------------------------------------------------ arquivos ---
++
++def test_seguidor_comeca_do_fim_e_depois_so_entrega_linha_completa(tmp_path):
++    log = tmp_path / "router.log"
++    log.write_text("antiga\n")
++    s = cp.Seguidor(str(log))
++    assert s.novas() == []
++    with open(log, "a") as f:
++        f.write("nova 1\nmeia linha")
++    assert s.novas() == ["nova 1"]
++    with open(log, "a") as f:
++        f.write(" completa\n")
++    assert s.novas() == ["meia linha completa"]
++
++
++def test_seguidor_recomeca_quando_o_arquivo_e_truncado(tmp_path):
++    log = tmp_path / "router.log"
++    log.write_text("um\ndois\ntres\n")
++    s = cp.Seguidor(str(log))
++    s.novas()
++    log.write_text("depois do truncamento\n")
++    assert s.novas() == ["depois do truncamento"]
++
++
++def test_seguidor_retoma_do_ponto_salvo_entre_execucoes(tmp_path):
++    log = tmp_path / "router.log"
++    log.write_text("um\n")
++    a = cp.Seguidor(str(log))
++    a.novas()
++    with open(log, "a") as f:
++        f.write("enquanto o agente estava fora\n")
++    b = cp.Seguidor(str(log), a.ino, a.pos)
++    assert b.novas() == ["enquanto o agente estava fora"]
++
++
++def test_vigia_falhas_nao_repete_o_passado_e_pega_o_novo(tmp_path):
++    lf = tmp_path / "lf"
++    lf.mkdir()
++    (lf / "falha_2026-07-15_03-32-36.txt").write_text("Motivo: timed out\n")
++    v = cp.VigiaFalhas(str(lf))
++    assert v.novos() == []
++    novo = lf / "falha_2026-09-04_09-00-00.txt"
++    novo.write_text("Motivo: [Errno 32] Broken pipe\n")
++    os.utime(lf, (1e9, 2e9))                 # garante mtime diferente
++    assert v.novos() == [("falha_2026-09-04_09-00-00.txt", "[Errno 32] Broken pipe")]
++    # nova execucao com o estado salvo: so o que for posterior ao ultimo nome
++    w = cp.VigiaFalhas(str(lf), v.mtime, v.ultimo)
++    (lf / "falha_2026-09-04_10-00-00.txt").write_text("Motivo: x\n")
++    assert [n for n, _ in w.novos()] == ["falha_2026-09-04_10-00-00.txt"]
++
++
++# ------------------------------------------------------------- registro ---
++
++def test_registro_roda_e_mantem_so_os_mais_novos(tmp_path):
++    r = cp.Registro(str(tmp_path), rotacao_mb=0, manter=2)
++    r.limite = 200
++    for i in range(30):
++        r.grava({"i": i, "x": "y" * 50})
++    rodados = list(tmp_path.glob("cp-*.jsonl"))
++    assert 1 <= len(rodados) <= 2
++    linhas = [json.loads(x) for p in rodados + [tmp_path / "atual.jsonl"] if p.exists()
++              for x in p.read_text().splitlines()]
++    assert max(x["i"] for x in linhas) == 29
++
++
++# --------------------------------------------------------------- agente ---
++
++def _agente(tmp_path, monkeypatch, proc, sysfs):
++    base, lf = tmp_path / "base", tmp_path / "lf"
++    base.mkdir(exist_ok=True)
++    lf.mkdir(exist_ok=True)
++    (base / "router.log").write_text("reinicializando roteador\n")
++    cfg = dict(cp.PADRAO, camera="102", wan="192.168.10.102", base=str(base),
++               logs_failure=str(lf), saida=str(tmp_path / "out"),
++               estado=str(tmp_path / "estado.json"), proc=str(proc), sys=str(sysfs))
++    respostas = {"gw": 1.0}
++    monkeypatch.setattr(cp, "ping_ms", lambda ip, timeout=2.0: respostas.get(
++        "gw") if ip == cfg["gateway"] else 50.0)
++    monkeypatch.setattr(cp, "tcp", lambda *a, **k: ("aberta", 3))
++    relogio = {"t": 1.0e9 - 40 * 86400, "m": 100.0}
++    # o CPE tem a hora certa; a Pi esta 40 dias atrasada
++    monkeypatch.setattr(cp, "http_data", lambda ip: (200, relogio["t"] + 40 * 86400))
++    monkeypatch.setattr(cp, "throttled", lambda *a, **k: "0x0")
++    ag = cp.Agente(cfg, agora=lambda: relogio["t"], mono=lambda: relogio["m"])
++    return ag, cfg, respostas, relogio
++
++
++def _eventos(cfg):
++    p = Path(cfg["saida"]) / "atual.jsonl"
++    return [json.loads(x) for x in p.read_text().splitlines() if '"evento"' in x]
++
++
++def test_agente_registra_historico_estado_inicial_e_relogio(tmp_path, monkeypatch):
++    proc, sysfs = _proc(tmp_path)
++    _cliente(proc)
++    ag, cfg, _, _ = _agente(tmp_path, monkeypatch, proc, sysfs)
++    ag.inicio()
++    ag.ciclo()
++    evs = {e["ev"]: e for e in _eventos(cfg)}
++    assert evs["historico"]["router_log_fim"] == ["reinicializando roteador"]
++    assert evs["estado_inicial"]["conn"][0]["estado"] == "ESTABLISHED"
++    assert evs["estado_inicial"]["cliente"][0]["pid"] == 2727233
++    assert evs["relogio"]["offset_s"] == 40 * 86400
++
++
++def test_agente_registra_transicoes(tmp_path, monkeypatch):
++    proc, sysfs = _proc(tmp_path)
++    _cliente(proc)
++    ag, cfg, respostas, relogio = _agente(tmp_path, monkeypatch, proc, sysfs)
++    ag.inicio()
++    ag.ciclo()
++    # o gateway some, a conexao fecha, o cliente morre e uma linha entra no router.log
++    respostas["gw"] = None
++    (proc / "net/tcp").write_text(TCP_HDR + LINHA_OUTRA)
++    for f in (proc / "2727233").iterdir():
++        f.unlink()
++    (proc / "2727233").rmdir()
++    with open(Path(cfg["base"]) / "router.log", "a") as f:
++        f.write("2026-09-04 08:00:00 | Erro ao reiniciar o roteador: Chrome failed to start\n")
++    relogio["t"] += 30
++    relogio["m"] += 30
++    ag.ciclo()
++    nomes = [e["ev"] for e in _eventos(cfg)]
++    for esperado in ("gateway_perdido", "conexao_servidor", "cliente_sumiu", "router_log"):
++        assert esperado in nomes, esperado
++
++
++def test_agente_avisa_fila_presa(tmp_path, monkeypatch):
++    proc, sysfs = _proc(tmp_path)
++    ag, cfg, _, relogio = _agente(tmp_path, monkeypatch, proc, sysfs)
++    ag.inicio()
++    for _ in range(cp.CICLOS_FILA_PRESA + 2):     # bytes na fila, contador da placa parado
++        relogio["m"] += 30
++        ag.ciclo()
++    assert [e["ev"] for e in _eventos(cfg)].count("fila_presa") == 1
++
++
++def test_boot_novo_e_detectado_pelo_estado_salvo(tmp_path, monkeypatch):
++    proc, sysfs = _proc(tmp_path)
++    ag, cfg, _, _ = _agente(tmp_path, monkeypatch, proc, sysfs)
++    ag.inicio()
++    ag.ciclo()
++    (proc / "sys/kernel/random/boot_id").write_text("11111111-2222-3333-4444-555555555555\n")
++    ag2 = cp.Agente(cfg, agora=lambda: 1.0e9, mono=lambda: 5.0)
++    ag2.inicio()
++    assert "boot_novo" in [e["ev"] for e in _eventos(cfg)]
++
++
++def test_relatorio_mostra_eventos_lacuna_e_hora_real(tmp_path, monkeypatch, capsys):
++    proc, sysfs = _proc(tmp_path)
++    ag, cfg, _, relogio = _agente(tmp_path, monkeypatch, proc, sysfs)
++    ag.inicio()
++    ag.ciclo()
++    relogio["t"] += 600
++    relogio["m"] += 600                     # 10 min sem amostra no mesmo boot
++    ag.ciclo()
++    cp.relatorio(cfg["saida"])
++    out = capsys.readouterr().out
++    assert "LACUNA de 600 s" in out
++    assert "+40.00 dias" in out
++    assert "estado_inicial" in out
+-- 
+2.43.0
+
+
+From 33f095acbaffab86723867bc92a65f53eff5891e Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 14 Oct 2026 09:39:01 -0300
+Subject: [PATCH 2/3] docs: o .bashrc da 102 sobe o cliente em todo terminal
+ aberto
+
+O pai do cliente que trouxe a 102 de volta e' um bash nascido no mesmo
+segundo; o .bashrc termina rodando o Cliente_H01. Abrir um terminal pelo
+VNC reiniciou a camera - o cabo foi coincidencia. Runbook avisa do cliente
+em dobro e de como desligar esse autostart antes do nivel 2.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01BudwEqt7uLTga9fhoonoyf
+---
+ docs/diario/2026-10-14-sessao.md | 33 +++++++++++++++++++++++++++-----
+ docs/runbooks/caixa-preta.md     | 23 ++++++++++++++++------
+ 2 files changed, 45 insertions(+), 11 deletions(-)
+
+diff --git a/docs/diario/2026-10-14-sessao.md b/docs/diario/2026-10-14-sessao.md
+index eeaceca..34a29e8 100644
+--- a/docs/diario/2026-10-14-sessao.md
++++ b/docs/diario/2026-10-14-sessao.md
+@@ -36,10 +36,32 @@ estava viva; o que morreu foi o **cliente** — família 3 da tabela de
+ A suspeita sobre a Elsys perde força para a 102: ela respondia na LAN e o cabo
+ só ficou 21 s fora.
+ 
+-Falta confirmar quem iniciou o cliente às 09:07: se foi à mão pelo VNC, o
+-cabo foi coincidência e o que trouxe a 102 de volta foi o cliente novo. Se
+-houver um autostart desconhecido, a explicação muda. O comando que decide está
+-no runbook da caixa-preta (o processo pai do cliente).
++### Quem trouxe a 102 de volta: um terminal aberto
++
++O pai do cliente é um `bash` nascido no mesmo segundo (08:02:58 na Pi), e o
++`.bashrc` termina com:
++
++```
++echo Running at boot
++python3 /home/pi/Desktop/Porto_de_Santos_2025/PRINCIPAL/2026_02_05_Cliente_H01.py
++```
++
++Esse é o "autostart" da 102: no boot, o login automático no tty1 abre um bash
++e o `.bashrc` sobe o cliente — por isso o inventário de julho mostrava o
++cliente no `tty1`. Mas o `.bashrc` roda em **todo** shell interativo: quando
++alguém abriu um terminal pelo VNC às 09:07 (hora real), ele subiu um cliente
++novo. **Foi isso que trouxe a 102 de volta**, não o cabo, que tinha voltado
++14 minutos antes.
++
++Consequências:
++
++- Desde 24/08, bastava abrir um terminal na 102 para ela voltar.
++- Cada terminal novo sobe **mais um** cliente com o mesmo ID. Ctrl+C nele para
++  só esse; fechar a janela errada mata o de produção.
++- O "autostart" só age no boot. Se o cliente morre com a Pi ligada (o F7), nada
++  o reinicia — exatamente os 50 dias da 102.
++- Para o nível 2 (cliente sob systemd), as duas linhas do `.bashrc` precisam
++  sair, senão boot e terminais sobem clientes em dobro.
+ 
+ ## 3. Entregue
+ 
+@@ -61,7 +83,8 @@ no runbook da caixa-preta (o processo pai do cliente).
+ 
+ | O quê | Estado |
+ |---|---|
+-| Quem iniciou o cliente da 102 às 09:07 | perguntar à equipe / processo pai |
++| Quem iniciou o cliente da 102 às 09:07 | **resolvido**: o `.bashrc`, num terminal aberto pelo VNC |
++| Conferir se há clientes em dobro na 102 | `pgrep -af Cliente_H01` |
+ | `cat` do `falha_2026-07-15_03-32-36.txt` (linha `Motivo:`) | pedido |
+ | Hora da reconexão da 102 no `LOG_connections.txt` (≈09:07 confirma) | pedido |
+ | Nível 1 na 102 | pronto para instalar |
+diff --git a/docs/runbooks/caixa-preta.md b/docs/runbooks/caixa-preta.md
+index 5795871..5af3433 100644
+--- a/docs/runbooks/caixa-preta.md
++++ b/docs/runbooks/caixa-preta.md
+@@ -39,7 +39,15 @@ Não toca no cliente nem na transmissão. Pode ser feito com a câmera no ar.
+    `/home/pi/caixa-preta/`). Sem o pacote, copiar de `deploy/rasp/` pelo menos
+    `caixa_preta.py`, `caixa-preta.service`, `journald-persistente.conf` e
+    `instalar_caixa_preta.sh` para essa pasta.
+-2. **Instalar** (num terminal da Rasp):
++2. **Instalar** (num terminal da Rasp).
++
++   > **Atenção na 102:** o `.bashrc` dela termina com
++   > `python3 .../2026_02_05_Cliente_H01.py`. Todo terminal novo **inicia um
++   > segundo cliente** com o mesmo ID. Ao abrir o terminal, aperte **Ctrl+C
++   > uma vez** para parar esse cliente novo (só o dele) e usar o prompt. Nunca
++   > feche nem dê Ctrl+C na janela antiga, onde roda o cliente de produção.
++   > Conferir que sobrou um só: `pgrep -af Cliente_H01`.
++
+    ```bash
+    cd /home/pi/caixa-preta
+    sudo bash instalar_caixa_preta.sh 102
+@@ -59,9 +67,11 @@ Muda como o cliente roda. Ganho: o erro que mata o cliente fica gravado, o
+ cliente volta sozinho em 10 s, e o F7 deixa de existir. Custo: uma
+ interrupção de segundos ao trocar o cliente manual pelo serviço.
+ 
+-**Antes**, descobrir como o cliente de hoje é iniciado — se houver um
+-autostart, ele e o serviço subiriam dois clientes com o mesmo ID no próximo
+-boot:
++**Antes**, desligar o autostart atual. Na 102 ele é o fim do `.bashrc`
++(confirmado em 14/10: o pai do cliente é um `bash` nascido no mesmo segundo),
++que inicia o cliente a cada boot no tty1 **e a cada terminal aberto**. Com o
++serviço instalado, ele subiria um segundo cliente com o mesmo ID. Nas outras
++câmeras, conferir:
+ 
+ ```bash
+ P=$(pgrep -f Cliente_H01 | head -1); ps -o pid,ppid,lstart,cmd -p $P
+@@ -69,8 +79,9 @@ ps -o pid,lstart,cmd -p $(ps -o ppid= -p $P)
+ ls ~/.config/autostart 2>/dev/null; crontab -l 2>/dev/null; tail -5 ~/.bashrc
+ ```
+ 
+-Se aparecer um autostart (arquivo em `~/.config/autostart`, linha no
+-`.bashrc` ou no crontab), desativar **esse** antes. Depois:
++Para desligar, comentar as duas linhas finais do `.bashrc`
++(`nano ~/.bashrc`, pôr `#` na frente de `echo Running at boot` e de
++`python3 .../Cliente_H01.py`). Isso não para o cliente que já roda. Depois:
+ 
+ ```bash
+ cd /home/pi/caixa-preta
+-- 
+2.43.0
+
+
+From 06314186ec34a02c0ab8b3287ea79a0aa721d547 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 14 Oct 2026 09:41:57 -0300
+Subject: [PATCH 3/3] docs(diario): o cabo destravou a Elsys, o terminal
+ reiniciou o cliente
+
+O VNC so voltou depois de o cabo do CPE ser recolocado: o caminho entre a
+Pi e a Elsys estava travado, alem do cliente morto pelo F7.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01BudwEqt7uLTga9fhoonoyf
+---
+ docs/diario/2026-10-14-sessao.md | 52 ++++++++++++++++++++------------
+ 1 file changed, 33 insertions(+), 19 deletions(-)
+
+diff --git a/docs/diario/2026-10-14-sessao.md b/docs/diario/2026-10-14-sessao.md
+index 34a29e8..1b8db7c 100644
+--- a/docs/diario/2026-10-14-sessao.md
++++ b/docs/diario/2026-10-14-sessao.md
+@@ -36,32 +36,44 @@ estava viva; o que morreu foi o **cliente** — família 3 da tabela de
+ A suspeita sobre a Elsys perde força para a 102: ela respondia na LAN e o cabo
+ só ficou 21 s fora.
+ 
+-### Quem trouxe a 102 de volta: um terminal aberto
+-
+-O pai do cliente é um `bash` nascido no mesmo segundo (08:02:58 na Pi), e o
+-`.bashrc` termina com:
+-
+-```
+-echo Running at boot
+-python3 /home/pi/Desktop/Porto_de_Santos_2025/PRINCIPAL/2026_02_05_Cliente_H01.py
+-```
+-
+-Esse é o "autostart" da 102: no boot, o login automático no tty1 abre um bash
+-e o `.bashrc` sobe o cliente — por isso o inventário de julho mostrava o
+-cliente no `tty1`. Mas o `.bashrc` roda em **todo** shell interativo: quando
+-alguém abriu um terminal pelo VNC às 09:07 (hora real), ele subiu um cliente
+-novo. **Foi isso que trouxe a 102 de volta**, não o cabo, que tinha voltado
+-14 minutos antes.
++### Quem trouxe a 102 de volta: o cabo e um terminal, nessa ordem
++
++Correção do mesmo dia, com o relato de quem estava no VNC: **o VNC só voltou
++depois de o cabo do CPE ser desconectado e reconectado**, e as imagens só
++voltaram depois de abrirem um terminal. Foram dois defeitos empilhados:
++
++1. **O caminho entre a Pi e a Elsys estava travado.** Pi ligada, Elsys
++   registrada na eNodeB, mas nada passava pelo cabo — por isso todas as
++   sondas desde 27/08 deram porta recusada na 102. Tirar e recolocar o cabo
++   destravou. É a hipótese "modem registrado, roteador travado do lado da
++   LAN" da Elsys.
++2. **O cliente estava morto** (F7) e só voltou quando um terminal foi aberto:
++   o pai do cliente atual é um `bash` nascido no mesmo segundo (08:02:58 na
++   Pi), e o `.bashrc` termina com
++
++   ```
++   echo Running at boot
++   python3 /home/pi/Desktop/Porto_de_Santos_2025/PRINCIPAL/2026_02_05_Cliente_H01.py
++   ```
++
++   Esse é o "autostart" da 102: roda no login automático do tty1 no boot e
++   **em todo terminal aberto**. Com a Pi ligada, nada reinicia o cliente que
++   morre.
++
++Um indício a confirmar: o `router.log` tem vários "roteador reiniciado com
++sucesso", mas o kernel da Pi não registra nenhuma queda de link nos 54 dias,
++fora a do cabo em 14/10. Um reinício real do CPE costuma derrubar a porta.
++Os "reinícios" podem não ter acontecido.
+ 
+ Consequências:
+ 
+-- Desde 24/08, bastava abrir um terminal na 102 para ela voltar.
+ - Cada terminal novo sobe **mais um** cliente com o mesmo ID. Ctrl+C nele para
+   só esse; fechar a janela errada mata o de produção.
+-- O "autostart" só age no boot. Se o cliente morre com a Pi ligada (o F7), nada
+-  o reinicia — exatamente os 50 dias da 102.
+ - Para o nível 2 (cliente sob systemd), as duas linhas do `.bashrc` precisam
+   sair, senão boot e terminais sobem clientes em dobro.
++- Se o journal confirmar o travamento do lado da LAN, cabe um auto-reparo
++  barato: gateway mudo com cabo ligado por alguns minutos → a Pi derruba e
++  levanta a própria eth0, o equivalente ao cabo.
+ 
+ ## 3. Entregue
+ 
+@@ -84,6 +96,8 @@ Consequências:
+ | O quê | Estado |
+ |---|---|
+ | Quem iniciou o cliente da 102 às 09:07 | **resolvido**: o `.bashrc`, num terminal aberto pelo VNC |
++| O que travou entre a Pi e a Elsys em 24/08 | journal da Pi nas janelas de 24/08 e 14/10 (comandos pedidos) |
++| Os "reinícios com sucesso" aconteceram? | contar quedas de link no kernel × linhas no `router.log` |
+ | Conferir se há clientes em dobro na 102 | `pgrep -af Cliente_H01` |
+ | `cat` do `falha_2026-07-15_03-32-36.txt` (linha `Motivo:`) | pedido |
+ | Hora da reconexão da 102 no `LOG_connections.txt` (≈09:07 confirma) | pedido |
+-- 
+2.43.0
+
