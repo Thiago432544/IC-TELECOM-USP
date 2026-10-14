@@ -1,0 +1,23 @@
+[Unit]
+Description=Auto-reparo do caminho de rede da camera Porto de Santos
+After=NetworkManager.service network.target
+
+[Service]
+Type=simple
+# modo, camera, interface etc. vem de /etc/auto-reparo.conf (escrito pelo instalador)
+ExecStart=/usr/bin/python3 -u /opt/caixa-preta/auto_reparo.py
+Restart=always
+RestartSec=15
+# Precisa de root: nmcli, ip link e systemctl restart do VNC.
+Nice=5
+OOMScoreAdjust=-900
+MemoryMax=64M
+CPUQuota=10%
+# SIGTERM vira saida limpa no python: o "ip link set up" do degrau 2 roda
+# mesmo se o servico for parado no meio dos 15 s de link fora.
+TimeoutStopSec=40
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

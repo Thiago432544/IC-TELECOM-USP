@@ -64,6 +64,43 @@ Não toca no cliente nem na transmissão. Pode ser feito com a câmera no ar.
 
 Ordem: **102 agora**; 105 quando houver janela; 106 quando ela voltar.
 
+## Auto-reparo — manter o caminho (e o VNC) de pé
+
+Em 24/08 a Elsys da 102 parou de encaminhar o tráfego por 50 dias, e o VNC
+morreu junto; tirar e recolocar o cabo resolveu. O `auto_reparo.py` faz isso
+sozinho: a cada minuto testa o caminho até o PC do SPA (`192.168.10.101:55000`,
+o mesmo encaminhamento por onde o VNC entra) e, com o cabo ligado, sobe uma
+escada:
+
+| Tempo sem caminho | O que faz |
+|---|---|
+| 10 min | renegocia o endereço (`nmcli connection up`) |
+| 20 min | derruba a placa de rede por 15 s e levanta — o "cabo" por software |
+| depois | nova rodada com espera de 1 h, 2 h, 4 h, 6 h; no máximo 8 ações por dia |
+
+Também reinicia o serviço do RealVNC se ele parar. Não reinicia a Elsys e não
+mexe no cliente da câmera (isso é o nível 2).
+
+O caminho conta como de pé se o cliente está conectado ou se a conexão de teste
+**abre**. Recusa conta como ruim: o servidor sempre escuta na 55000, então um
+RST vem de alguém no meio — em 24/08, a própria Elsys.
+
+Instalar (na mesma pasta da caixa-preta):
+
+```bash
+sudo bash instalar_auto_reparo.sh 102              # já agindo
+sudo bash instalar_auto_reparo.sh 102 --observar   # só registra o que faria
+```
+
+Sem queda, o journal só mostra `auto_reparo_inicio`. Os eventos (`caminho_ruim`,
+`reparo`, `caminho_ok` com `resolvido_por`) entram no mesmo `--relatorio` da
+caixa-preta. O `resolvido_por` responde a pergunta aberta em 14/10: se a 102
+volta no degrau 1, bastava a renegociação de endereço; se só no 2, era preciso
+o link cair.
+
+Suspender durante manutenção: `sudo touch /etc/auto-reparo.pausa` (retomar:
+`sudo rm /etc/auto-reparo.pausa`).
+
 ## Nível 2 — cliente sob systemd (recomendado; decisão do time)
 
 Muda como o cliente roda. Ganho: o erro que mata o cliente fica gravado, o
@@ -140,6 +177,8 @@ O relatório imprime cada evento com a hora da Pi e a **hora real estimada**
 | `LACUNA de N s sem amostra` | a própria Pi parou (travamento, I/O do cartão) |
 | `boot_novo` | a Pi reiniciou; `ultima_amostra_t` diz quando ela parou |
 | `throttled` diferente de `0x0` | subtensão ou temperatura |
+| `reparo` seguido de `caminho_ok` | o auto-reparo destravou; `resolvido_por` diz com qual degrau |
+| `reparo` repetido sem `caminho_ok` | o problema não se resolve de dentro da Pi: rádio, eNodeB, energia da Elsys ou o PC do SPA |
 
 ## Volume
 

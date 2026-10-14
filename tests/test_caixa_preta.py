@@ -77,10 +77,14 @@ def test_proc_net_tcp_decodifica_ip_porta_estado_e_fila():
     assert c["txq"] == 8000 and c["rxq"] == 0 and c["retr"] == 3
 
 
-def test_conexoes_servidor_filtra_destino_e_ignora_porta_da_sonda(tmp_path):
+def test_conexoes_servidor_filtra_destino_e_ignora_portas_das_sondas(tmp_path):
     proc, _ = _proc(tmp_path)
     assert len(cp.conexoes_servidor(str(proc), "192.168.10.101", 55000)) == 1
     assert cp.conexoes_servidor(str(proc), "192.168.10.101", 55000, [41022]) == []
+    # sondas saem das portas 55090-55099 e nunca contam como conexao do cliente
+    sonda = LINHA_CLIENTE.replace("660BA8C0:A03E", "660BA8C0:%04X" % 55095)
+    (proc / "net/tcp").write_text(TCP_HDR + sonda)
+    assert cp.conexoes_servidor(str(proc), "192.168.10.101", 55000) == []
 
 
 def test_arp_distingue_completa_incompleta_e_ausente():
@@ -284,3 +288,18 @@ def test_relatorio_mostra_eventos_lacuna_e_hora_real(tmp_path, monkeypatch, caps
     assert "LACUNA de 600 s" in out
     assert "+40.00 dias" in out
     assert "estado_inicial" in out
+
+
+def test_tcp_sai_da_porta_local_pedida_e_distingue_recusa():
+    import socket as so
+    srv = so.socket()
+    srv.setsockopt(so.SOL_SOCKET, so.SO_REUSEADDR, 1)
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(1)
+    porta = srv.getsockname()[1]
+    r, _ = cp.tcp("127.0.0.1", porta, 2, porta_local=55093)
+    c, origem = srv.accept()
+    assert r == "aberta" and origem[1] == 55093
+    c.close()
+    srv.close()
+    assert cp.tcp("127.0.0.1", porta, 2)[0] == "recusada"

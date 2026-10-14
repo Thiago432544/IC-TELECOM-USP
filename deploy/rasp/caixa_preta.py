@@ -81,6 +81,13 @@ CADA_SERVIDOR = 300            # so quando o cliente NAO esta conectado
 CADA_VCGENCMD = 300
 CICLOS_FILA_PRESA = 4          # 4 x 30 s com bytes parados na fila de envio
 
+# As sondas ao servidor saem de portas locais fixas, para nunca aparecerem como
+# conexao do cliente: 55090-55094 sao desta caixa-preta, 55095-55099 do
+# auto_reparo.py. Cada processo roda as suas, e assim a mesma porta so volta a
+# ser usada depois que a anterior saiu do TIME_WAIT (60 s).
+PORTAS_SONDA = range(55090, 55100)
+PORTAS_CAIXA_PRETA = (55090, 55091, 55092, 55093, 55094)
+
 ESTADOS_TCP = {
     "01": "ESTABLISHED", "02": "SYN_SENT", "03": "SYN_RECV", "04": "FIN_WAIT1",
     "05": "FIN_WAIT2", "06": "TIME_WAIT", "07": "CLOSE", "08": "CLOSE_WAIT",
@@ -151,7 +158,7 @@ def parse_proc_net_tcp(texto):
     return out
 
 
-def conexoes_servidor(proc, ip, porta, ignorar_portas=()):
+def conexoes_servidor(proc, ip, porta, ignorar_portas=PORTAS_SONDA):
     todas = parse_proc_net_tcp(ler(os.path.join(proc, "net/tcp"), ""))
     return [{k: c[k] for k in ("local", "estado", "txq", "rxq", "retr")}
             for c in todas if c["remoto_ip"] == ip and c["remoto_porta"] == porta
@@ -330,16 +337,19 @@ def _ping_bin(ip, timeout):
         return None
 
 
-def tcp(ip, porta, timeout=5.0, portas_locais=None):
-    """('aberta'|'recusada'|'timeout'|'erro:<errno>', ms). A porta local usada
-    vai para `portas_locais`, para a sonda nao aparecer como conexao do cliente."""
+def tcp(ip, porta, timeout=5.0, porta_local=None):
+    """('aberta'|'recusada'|'timeout'|'erro:<errno>', ms).
+
+    Com `porta_local`, a conexao sai dessa porta (ver PORTAS_SONDA)."""
     t0 = time.monotonic()
+    s = None
     try:
-        s = socket.create_connection((ip, porta), timeout)
-        if portas_locais is not None:
-            portas_locais.append(s.getsockname()[1])
-            del portas_locais[:-20]
-        s.close()
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        if porta_local:
+            s.bind(("", porta_local))
+        s.settimeout(timeout)
+        s.connect((ip, porta))
         r = "aberta"
     except ConnectionRefusedError:
         r = "recusada"
@@ -347,6 +357,9 @@ def tcp(ip, porta, timeout=5.0, portas_locais=None):
         r = "timeout"
     except OSError as e:
         r = f"erro:{e.errno}"
+    finally:
+        if s is not None:
+            s.close()
     return r, round((time.monotonic() - t0) * 1000)
 
 
@@ -559,7 +572,7 @@ class Agente:
         self.throttled_cache = None
         self.fila_presa = 0
         self.fila_avisada = False
-        self.portas_sonda = []
+        self._porta = 0
 
     # -- registro
     def _base(self, tipo):
@@ -600,8 +613,7 @@ class Agente:
         a["gw_arp"] = parse_arp(ler(os.path.join(cfg["proc"], "net/arp"), ""), cfg["gateway"])
         a["wan_ms"] = ping_ms(cfg["wan"]) if cfg["wan"] else None
         a["eth"] = interface(cfg["proc"], cfg["sys"], cfg["iface"])
-        a["conn"] = conexoes_servidor(cfg["proc"], cfg["servidor"], int(cfg["porta"]),
-                                      self.portas_sonda)
+        a["conn"] = conexoes_servidor(cfg["proc"], cfg["servidor"], int(cfg["porta"]))
         a["cliente"] = processos_cliente(cfg["proc"], cfg["padrao_cliente"])
         a["sis"] = sistema(cfg["proc"], cfg["sys"])
 
@@ -623,7 +635,7 @@ class Agente:
             # conexao sem ID sem gravar linha, mas nao ha por que somar trafego.
             self.ultimo["servidor"] = m
             a["servidor"] = tcp(cfg["servidor"], int(cfg["porta"]),
-                                portas_locais=self.portas_sonda)
+                                porta_local=self._proxima_porta())
 
         self.reg.grava(a)
         self._transicoes(a, conectado)
@@ -646,6 +658,10 @@ class Agente:
                                          "ultimo": self.falhas.ultimo})
         salva_estado(cfg["estado"], self.estado)
         return a
+
+    def _proxima_porta(self):
+        self._porta = (self._porta + 1) % len(PORTAS_CAIXA_PRETA)
+        return PORTAS_CAIXA_PRETA[self._porta]
 
     def _arquivos_do_cliente(self):
         for linha in self.router.novas():
