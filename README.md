@@ -93,6 +93,8 @@ monitor/          o coletor (roda no PC Windows do SPA)
 
 deploy/pc/        patches e instaladores do PC do SPA
 deploy/rasp/      unit systemd, NTP e watchdog blindado das Rasps
+  caixa-preta/      registro de rede, cliente e sistema dentro da Pi
+  auto-reparo/      destrava o caminho de rede sozinho (o "cabo" por software)
 docs/evidencias/  diagnósticos de campo que embasaram o design
 docs/runbooks/    passo a passo de aplicação
 docs/diario/      registro por sessão: o que foi feito, achado e refutado

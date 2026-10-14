@@ -1,7 +1,7 @@
 #!/bin/bash
 # Instala o auto-reparo do caminho de rede numa Rasp de camera.
 #
-# Uso (na Rasp, dentro da pasta onde estao estes arquivos):
+# Uso (na Rasp, dentro da pasta auto-reparo/, com a pasta caixa-preta/ ao lado):
 #   sudo bash instalar_auto_reparo.sh 102              # ja agindo
 #   sudo bash instalar_auto_reparo.sh 102 --observar   # so registra o que faria
 #
@@ -17,12 +17,15 @@ MODO=ativo
 
 [ "$(id -u)" -eq 0 ] || { echo "ERRO: rode com sudo"; exit 1; }
 [[ "$CAM" =~ ^[0-9]{3}$ ]] || { echo "ERRO: informe a camera, ex.: sudo bash $0 102"; exit 1; }
-for f in auto_reparo.py caixa_preta.py auto-reparo.service; do
-    [ -f "$HERE/$f" ] || { echo "ERRO: falta $f ao lado do instalador"; exit 1; }
+# o auto-reparo usa funcoes da caixa-preta, que mora na pasta irma
+CP="$HERE/../caixa-preta/caixa_preta.py"
+[ -f "$CP" ] || CP="$HERE/caixa_preta.py"
+for f in "$HERE/auto_reparo.py" "$HERE/auto-reparo.service" "$CP"; do
+    [ -f "$f" ] || { echo "ERRO: falta $f (a pasta caixa-preta/ precisa estar ao lado)"; exit 1; }
 done
-if grep -q $'\r' "$HERE/auto_reparo.py" "$HERE/auto-reparo.service"; then
+if grep -q $'\r' "$HERE/auto_reparo.py" "$HERE/auto-reparo.service" "$CP"; then
     echo "ERRO: arquivos com fim de linha do Windows. Rode antes:"
-    echo "  sed -i 's/\\r\$//' *.sh *.py *.service *.conf"
+    echo "  sed -i 's/\\r\$//' ../*/*.sh ../*/*.py ../*/*.service ../*/*.conf"
     exit 1
 fi
 
@@ -39,8 +42,8 @@ echo "== 1. arquivos =="
 mkdir -p /opt/caixa-preta /var/log/caixa-preta /var/lib/caixa-preta
 install -m 0755 "$HERE/auto_reparo.py" /opt/caixa-preta/auto_reparo.py
 # o auto-reparo usa funcoes da caixa-preta: mesma versao nos dois
-if ! cmp -s "$HERE/caixa_preta.py" /opt/caixa-preta/caixa_preta.py 2>/dev/null; then
-    install -m 0755 "$HERE/caixa_preta.py" /opt/caixa-preta/caixa_preta.py
+if ! cmp -s "$CP" /opt/caixa-preta/caixa_preta.py 2>/dev/null; then
+    install -m 0755 "$CP" /opt/caixa-preta/caixa_preta.py
     systemctl try-restart caixa-preta.service 2>/dev/null || true
     echo "caixa_preta.py atualizado"
 fi

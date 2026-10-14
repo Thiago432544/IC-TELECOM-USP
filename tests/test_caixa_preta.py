@@ -1,4 +1,4 @@
-"""Testes da caixa-preta da Rasp (deploy/rasp/caixa_preta.py).
+"""Testes da caixa-preta da Rasp (deploy/rasp/caixa-preta/caixa_preta.py).
 
 Tudo roda sobre um /proc e um /sys falsos montados em tmp_path: o agente le
 os arquivos por caminho configuravel justamente para isto. As linhas de
@@ -9,7 +9,7 @@ import json
 import os
 from pathlib import Path
 
-CP_PATH = Path("deploy/rasp/caixa_preta.py")
+CP_PATH = Path("deploy/rasp/caixa-preta/caixa_preta.py")
 
 
 def _mod():

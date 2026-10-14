@@ -33,12 +33,11 @@ morreu (roda num terminal, o erro some), a **hora** de cada linha do
 
 Não toca no cliente nem na transmissão. Pode ser feito com a câmera no ar.
 
-1. **Copiar** o pacote `caixa-preta-AAAA-MM-DD.zip` para a Rasp. Pelo VNC:
-   no RealVNC Viewer, botão de transferência de arquivos → enviar para
-   `/home/pi`. Na Rasp: `cd ~ && unzip caixa-preta-*.zip` (cria
-   `/home/pi/caixa-preta/`). Sem o pacote, copiar de `deploy/rasp/` pelo menos
-   `caixa_preta.py`, `caixa-preta.service`, `journald-persistente.conf` e
-   `instalar_caixa_preta.sh` para essa pasta.
+1. **Copiar** a pasta `deploy/rasp/` do repositório para `/home/pi/rasp` na
+   Rasp (zip pelo botão de transferência de arquivos do RealVNC Viewer, e
+   `cd ~ && unzip <arquivo>.zip`). Dentro dela ficam `caixa-preta/` e
+   `auto-reparo/`, cada uma com o seu instalador; o auto-reparo usa a pasta
+   `caixa-preta/` ao lado.
 2. **Instalar** (num terminal da Rasp).
 
    > **Atenção na 102:** o `.bashrc` dela termina com
@@ -49,13 +48,14 @@ Não toca no cliente nem na transmissão. Pode ser feito com a câmera no ar.
    > Conferir que sobrou um só: `pgrep -af Cliente_H01`.
 
    ```bash
-   cd /home/pi/caixa-preta
+   cd ~/rasp/caixa-preta
    sudo bash instalar_caixa_preta.sh 102
    ```
    O gateway é detectado sozinho pela rota padrão (`.254` Elsys, `.1` Teltonika).
    Se aparecer `set: pipefail: invalid option` (ou `\r` em algum erro), os
-   arquivos passaram pelo Windows e ganharam fim de linha CRLF. Na pasta:
-   `sed -i 's/\r$//' *.sh *.py *.service *.conf` e rodar de novo.
+   arquivos passaram pelo Windows e ganharam fim de linha CRLF. Em `~/rasp`:
+   `sed -i 's/\r$//' */*.sh */*.py */*.service */*.conf *.sh *.py *.service *.conf`
+   e rodar de novo.
 3. **Conferir**: o fim da saída mostra `active` e as primeiras linhas do
    relatório — `inicio`, `historico` (o fim do `router.log` e os últimos
    `logs_failure`, guardados de uma vez), `estado_inicial` (conexão
@@ -85,9 +85,10 @@ O caminho conta como de pé se o cliente está conectado ou se a conexão de tes
 **abre**. Recusa conta como ruim: o servidor sempre escuta na 55000, então um
 RST vem de alguém no meio — em 24/08, a própria Elsys.
 
-Instalar (na mesma pasta da caixa-preta):
+Instalar:
 
 ```bash
+cd ~/rasp/auto-reparo
 sudo bash instalar_auto_reparo.sh 102              # já agindo
 sudo bash instalar_auto_reparo.sh 102 --observar   # só registra o que faria
 ```
@@ -124,7 +125,7 @@ Para desligar, comentar as duas linhas finais do `.bashrc`
 `python3 .../Cliente_H01.py`). Isso não para o cliente que já roda. Depois:
 
 ```bash
-cd /home/pi/caixa-preta
+cd ~/rasp
 sudo bash install_camera_client.sh        # instala o serviço e o watchdog_test.py blindado
 # parar o cliente manual: Ctrl+C na janela dele (ou: kill $(pgrep -f Cliente_H01))
 sudo systemctl start camera-client

@@ -1,7 +1,7 @@
 #!/bin/bash
 # Instala a caixa-preta numa Rasp de camera. NAO mexe no cliente: so observa.
 #
-# Uso (na Rasp, dentro da pasta onde estao estes arquivos):
+# Uso (na Rasp, dentro da pasta caixa-preta/):
 #   sudo bash instalar_caixa_preta.sh 102
 #   sudo bash instalar_caixa_preta.sh 105            # gateway detectado sozinho
 #

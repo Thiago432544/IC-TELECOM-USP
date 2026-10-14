@@ -56,8 +56,11 @@ import sys
 import time
 
 AQUI = os.path.dirname(os.path.abspath(__file__))
-if AQUI not in sys.path:
-    sys.path.insert(0, AQUI)
+# Na Pi os dois moram em /opt/caixa-preta; no repositorio, em pastas irmas.
+for _p in (os.path.join(AQUI, "..", "caixa-preta"), AQUI):
+    _p = os.path.abspath(_p)
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 import caixa_preta as cp  # noqa: E402 - sondas e leitura de /proc compartilhadas
 
 VERSAO = "2026-10-14"

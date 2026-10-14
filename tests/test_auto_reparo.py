@@ -1,4 +1,4 @@
-"""Testes do auto-reparo da Rasp (deploy/rasp/auto_reparo.py).
+"""Testes do auto-reparo da Rasp (deploy/rasp/auto-reparo/auto_reparo.py).
 
 A logica de decisao roda contra um relogio falso, uma sonda falsa e um
 executor de comandos que so anota o que teria rodado: nenhum teste derruba
@@ -13,16 +13,16 @@ from pathlib import Path
 RASP = Path("deploy/rasp")
 
 
-def _mod(nome):
-    spec = importlib.util.spec_from_file_location(nome, RASP / f"{nome}.py")
+def _mod(nome, pasta):
+    spec = importlib.util.spec_from_file_location(nome, RASP / pasta / f"{nome}.py")
     m = importlib.util.module_from_spec(spec)
     sys.modules[nome] = m
     spec.loader.exec_module(m)
     return m
 
 
-cp = _mod("caixa_preta")
-ar = _mod("auto_reparo")
+cp = _mod("caixa_preta", "caixa-preta")
+ar = _mod("auto_reparo", "auto-reparo")
 
 TCP_HDR = ("  sl  local_address rem_address   st tx_queue rx_queue tr tm->when "
            "retrnsmt   uid  timeout inode\n")
