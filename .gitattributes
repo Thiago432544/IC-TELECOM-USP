@@ -1,3 +1,10 @@
 # O servidor roda no PC Windows: preservar CRLF para o diff contra o
 # arquivo em producao mostrar so as mudancas reais.
 deploy/pc/2026_02_01_Server_H00.py -text
+
+# O que roda nas Rasps (Linux) sai sempre com LF, mesmo num clone feito no
+# Windows: com CRLF o bash le "pipefail\r" e o systemd le o \r dentro do
+# ExecStart (aconteceu na instalacao da 102 em 14/10/2026).
+deploy/rasp/** text eol=lf
+*.sh text eol=lf
+*.service text eol=lf

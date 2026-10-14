@@ -53,6 +53,9 @@ Não toca no cliente nem na transmissão. Pode ser feito com a câmera no ar.
    sudo bash instalar_caixa_preta.sh 102
    ```
    O gateway é detectado sozinho pela rota padrão (`.254` Elsys, `.1` Teltonika).
+   Se aparecer `set: pipefail: invalid option` (ou `\r` em algum erro), os
+   arquivos passaram pelo Windows e ganharam fim de linha CRLF. Na pasta:
+   `sed -i 's/\r$//' *.sh *.py *.service *.conf` e rodar de novo.
 3. **Conferir**: o fim da saída mostra `active` e as primeiras linhas do
    relatório — `inicio`, `historico` (o fim do `router.log` e os últimos
    `logs_failure`, guardados de uma vez), `estado_inicial` (conexão
