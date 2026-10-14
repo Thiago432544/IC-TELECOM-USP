@@ -39,7 +39,15 @@ Não toca no cliente nem na transmissão. Pode ser feito com a câmera no ar.
    `/home/pi/caixa-preta/`). Sem o pacote, copiar de `deploy/rasp/` pelo menos
    `caixa_preta.py`, `caixa-preta.service`, `journald-persistente.conf` e
    `instalar_caixa_preta.sh` para essa pasta.
-2. **Instalar** (num terminal da Rasp):
+2. **Instalar** (num terminal da Rasp).
+
+   > **Atenção na 102:** o `.bashrc` dela termina com
+   > `python3 .../2026_02_05_Cliente_H01.py`. Todo terminal novo **inicia um
+   > segundo cliente** com o mesmo ID. Ao abrir o terminal, aperte **Ctrl+C
+   > uma vez** para parar esse cliente novo (só o dele) e usar o prompt. Nunca
+   > feche nem dê Ctrl+C na janela antiga, onde roda o cliente de produção.
+   > Conferir que sobrou um só: `pgrep -af Cliente_H01`.
+
    ```bash
    cd /home/pi/caixa-preta
    sudo bash instalar_caixa_preta.sh 102
@@ -59,9 +67,11 @@ Muda como o cliente roda. Ganho: o erro que mata o cliente fica gravado, o
 cliente volta sozinho em 10 s, e o F7 deixa de existir. Custo: uma
 interrupção de segundos ao trocar o cliente manual pelo serviço.
 
-**Antes**, descobrir como o cliente de hoje é iniciado — se houver um
-autostart, ele e o serviço subiriam dois clientes com o mesmo ID no próximo
-boot:
+**Antes**, desligar o autostart atual. Na 102 ele é o fim do `.bashrc`
+(confirmado em 14/10: o pai do cliente é um `bash` nascido no mesmo segundo),
+que inicia o cliente a cada boot no tty1 **e a cada terminal aberto**. Com o
+serviço instalado, ele subiria um segundo cliente com o mesmo ID. Nas outras
+câmeras, conferir:
 
 ```bash
 P=$(pgrep -f Cliente_H01 | head -1); ps -o pid,ppid,lstart,cmd -p $P
@@ -69,8 +79,9 @@ ps -o pid,lstart,cmd -p $(ps -o ppid= -p $P)
 ls ~/.config/autostart 2>/dev/null; crontab -l 2>/dev/null; tail -5 ~/.bashrc
 ```
 
-Se aparecer um autostart (arquivo em `~/.config/autostart`, linha no
-`.bashrc` ou no crontab), desativar **esse** antes. Depois:
+Para desligar, comentar as duas linhas finais do `.bashrc`
+(`nano ~/.bashrc`, pôr `#` na frente de `echo Running at boot` e de
+`python3 .../Cliente_H01.py`). Isso não para o cliente que já roda. Depois:
 
 ```bash
 cd /home/pi/caixa-preta
