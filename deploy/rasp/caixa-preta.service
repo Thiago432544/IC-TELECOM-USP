@@ -1,0 +1,22 @@
+[Unit]
+Description=Caixa-preta da camera Porto de Santos (rede, cliente e sistema)
+After=network.target
+
+[Service]
+Type=simple
+# camera, gateway etc. vem de /etc/caixa-preta.conf (escrito pelo instalador)
+ExecStart=/usr/bin/python3 -u /opt/caixa-preta/caixa_preta.py
+Restart=always
+RestartSec=15
+# O agente nunca pode tirar recurso do cliente nem ser morto antes dele:
+# prioridade mais baixa, teto de memoria e CPU, mas protegido do OOM killer.
+Nice=5
+OOMScoreAdjust=-900
+MemoryMax=96M
+CPUQuota=15%
+# eventos tambem vao para o journal (persistente): journalctl -u caixa-preta
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -10,6 +10,9 @@ WorkingDirectory=/home/pi/Desktop/Porto_de_Santos_2025/PRINCIPAL
 ExecStart=/usr/bin/python3 /home/pi/Desktop/Porto_de_Santos_2025/PRINCIPAL/2026_02_05_Cliente_H01.py
 Restart=always
 RestartSec=10
+# Sem isto o print do python fica no buffer e se perde quando o processo
+# morre - justamente o traceback que explicaria a morte (14/10/2026).
+Environment=PYTHONUNBUFFERED=1
 # stdout/stderr vao para o journal: journalctl -u camera-client -f
 StandardOutput=journal
 StandardError=journal
