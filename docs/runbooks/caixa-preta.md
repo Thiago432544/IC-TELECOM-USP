@@ -59,8 +59,9 @@ Não toca no cliente nem na transmissão. Pode ser feito com a câmera no ar.
 3. **Conferir**: o fim da saída mostra `active` e as primeiras linhas do
    relatório — `inicio`, `historico` (o fim do `router.log` e os últimos
    `logs_failure`, guardados de uma vez), `estado_inicial` (conexão
-   `ESTABLISHED` e o PID do cliente) e `relogio` (com `offset_s` perto de
-   +3 460 000 s, os ~40 dias de atraso).
+   `ESTABLISHED` e o PID do cliente) e `relogio` (a data que a Elsys informa;
+   nesta rede ela não acerta a hora e diz 2023, e o relatório a ignora — ver
+   "Hora real" abaixo).
 
 Ordem: **102 agora**; 105 quando houver janela; 106 quando ela voltar.
 
@@ -152,7 +153,7 @@ com o time antes de trocar.
 Na Rasp, **antes de reiniciar qualquer coisa**:
 
 ```bash
-python3 /opt/caixa-preta/caixa_preta.py --relatorio --horas 12 > ~/queda.txt
+python3 /opt/caixa-preta/caixa_preta.py --relatorio --horas 12 > ~/queda.txt   # + --offset, se já calibrado
 journalctl -u camera-client --since "-12h" >> ~/queda.txt     # nível 2
 journalctl -k --since "-12h" >> ~/queda.txt
 tail -80 ~/Desktop/Porto_de_Santos_2025/PRINCIPAL/router.log >> ~/queda.txt
@@ -161,8 +162,31 @@ tar czf ~/caixa-preta-$(hostname).tgz /var/log/caixa-preta ~/queda.txt
 
 E no PC: as linhas da câmera no `LOG_connections.txt` na mesma janela.
 
-O relatório imprime cada evento com a hora da Pi e a **hora real estimada**
-(pelo último `offset_s` do evento `relogio`), para cruzar direto com o PC.
+O relatório imprime cada evento com a hora da Pi e a **hora real estimada**,
+para cruzar direto com o PC.
+
+### Hora real
+
+O relógio da Pi está errado (sem RTC e sem NTP), e **o da Elsys também**: a
+rede da NLT não tem internet, a Elsys nunca acerta a hora, diz 2023 e volta
+horas a cada reinício (visto na 102 em 14/10). O relatório descarta esse
+relógio e deixa a coluna da hora real com `?`. Para preenchê-la, calibre pelo
+PC do SPA, que tem a hora certa:
+
+1. No relatório, pegue um evento `conexao_servidor` em que a conexão abriu
+   (`"para": ["ESTABLISHED"]`) e anote a hora da Pi.
+2. No `LOG_connections.txt`, pegue o `CONNECT` da câmera correspondente.
+3. Rode de novo com o par (Pi=real):
+
+```bash
+python3 /opt/caixa-preta/caixa_preta.py --relatorio --horas 2 \
+    --offset "2026-09-04 21:29:58=2026-10-14 22:34:03"
+# ou, já sabendo a defasagem:  --offset 40d1h4m5s
+```
+
+A amostra é a cada 30 s, então a calibração tem ±30 s. A defasagem só muda
+quando a Pi perde energia (o `fake-hwclock` volta à última hora salva): depois
+de um `boot_novo`, calibre de novo.
 
 ## Como ler os eventos
 
@@ -180,6 +204,9 @@ O relatório imprime cada evento com a hora da Pi e a **hora real estimada**
 | `throttled` diferente de `0x0` | subtensão ou temperatura |
 | `reparo` seguido de `caminho_ok` | o auto-reparo destravou; `resolvido_por` diz com qual degrau |
 | `reparo` repetido sem `caminho_ok` | o problema não se resolve de dentro da Pi: rádio, eNodeB, energia da Elsys ou o PC do SPA |
+| `wan_perdida` com o gateway respondendo, e `caminho_ruim` com `erro:101` | **a Elsys perdeu o LTE**: ela responde "rede inalcançável" para o PC (102, 14/10 22:28) |
+| `router_log` "reinicializando roteador", depois `gateway_perdido` e `Link is Down` no kernel | o watchdog do cliente reiniciou a Elsys de verdade (só funciona com o Chrome abrindo: cliente num terminal do VNC ou o `watchdog_test.py` do repositório) |
+| dois "reinicializando" seguidos, com o LTE voltando entre eles | o watchdog original reiniciando a cada tentativa: o segundo reinício derruba o LTE que acabou de voltar |
 
 ## Volume
 

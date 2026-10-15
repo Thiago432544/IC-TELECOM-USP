@@ -24,9 +24,13 @@ O que e' gravado (JSON, uma linha por registro, em /var/log/caixa-preta/):
   novo em logs_failure (com o Motivo), boot novo, relogio (Date do CPE).
 
 Cada linha carrega o relogio da Pi (t), o monotonico (mono) e o boot_id. O
-relogio da Pi esta errado em duas das tres cameras; a hora "real" sai do
-cabecalho Date do web server do CPE, registrado a cada 10 min como evento
-"relogio" (offset = Date do CPE - relogio da Pi).
+relogio da Pi esta errado em duas das tres cameras. O cabecalho Date do CPE
+fica registrado a cada 10 min (evento "relogio"), mas a Elsys tambem nao tem
+hora certa: a rede da NLT nao tem internet e o CPE nunca acerta o relogio (em
+14/10/2026 o da 102 dizia 31/07/2023 e voltou 13,6 h ao reiniciar). Date
+anterior a DATA_MINIMA e' descartado. A referencia confiavel e' o PC do SPA:
+compare a hora da Pi de uma conexao aberta com o CONNECT do LOG_connections e
+passe a diferenca ao relatorio com --offset.
 
 Principio da spec: o monitoramento nunca pode causar a falha. Por isso: so
 stdlib, somente leitura sobre tudo do cliente, nenhuma conexao com o servidor
@@ -38,6 +42,8 @@ Uso:
     sudo python3 caixa_preta.py --camera 102 --uma      # um ciclo, imprime e sai
     python3 caixa_preta.py --relatorio                  # linha do tempo dos eventos
     python3 caixa_preta.py --relatorio --horas 6        # so as ultimas 6 h
+    python3 caixa_preta.py --relatorio --offset 40d1h4m # hora real = Pi + offset
+    python3 caixa_preta.py --relatorio --offset "2026-09-04 21:29:58=2026-10-14 22:34:03"
 """
 import argparse
 import email.utils
@@ -45,6 +51,7 @@ import glob
 import http.client
 import json
 import os
+import re
 import socket
 import struct
 import subprocess
@@ -77,6 +84,9 @@ CONF = "/etc/caixa-preta.conf"
 # Cadencias, em segundos. O CPE e' o equipamento suspeito: sonda-lo de leve.
 CADA_CPE_TCP = 60
 CADA_CPE_HTTP = 600
+# Date do CPE anterior a isto nao e' hora de verdade (a Elsys sem NTP volta a
+# 2023 a cada reinicio) e nao serve de referencia para o relogio.
+DATA_MINIMA = 1767225600        # 2026-01-01 00:00 UTC
 CADA_SERVIDOR = 300            # so quando o cliente NAO esta conectado
 CADA_VCGENCMD = 300
 CICLOS_FILA_PRESA = 4          # 4 x 30 s com bytes parados na fila de envio
@@ -364,8 +374,8 @@ def tcp(ip, porta, timeout=5.0, porta_local=None):
 
 
 def http_data(ip, timeout=8.0):
-    """(status, Date do CPE em epoch) do GET /. O CPE tem hora da rede LTE;
-    a Pi nao. E' a referencia para corrigir o relogio dos registros."""
+    """(status, Date do CPE em epoch) do GET /. So vale como referencia se
+    for plausivel (>= DATA_MINIMA): as Elsys desta rede nao acertam a hora."""
     c = http.client.HTTPConnection(ip, 80, timeout=timeout)
     try:
         c.request("GET", "/", headers={"Connection": "close"})
@@ -645,7 +655,8 @@ class Agente:
             try:
                 st, data = http_data(cfg["gateway"])
                 self.evento("relogio", http_status=st, cpe_date=data,
-                            offset_s=round(data - self.agora(), 1) if data else None)
+                            offset_s=round(data - self.agora(), 1) if data else None,
+                            valido=bool(data and data >= DATA_MINIMA))
             except Exception as e:                       # noqa: BLE001 - so registra
                 self.evento("relogio", erro=repr(e)[:200])
 
@@ -772,16 +783,52 @@ def le_registros(pasta):
             continue
 
 
-def relatorio(pasta, horas=None, intervalo=30, saida=None):
+def _relogio_valido(r):
+    """Leitura de relogio que serve de referencia: Date do CPE plausivel."""
+    return (r.get("ev") == "relogio" and r.get("offset_s") is not None
+            and (r.get("cpe_date") or 0) >= DATA_MINIMA)
+
+
+def parse_offset(texto):
+    """Offset em segundos a partir de "3460000", "-90", "40d1h4m", "40d 01h04m05s"
+    ou de um par "hora da Pi=hora real" ("2026-09-04 21:29:58=2026-10-14 22:34:03",
+    as duas no fuso da Pi). Levanta ValueError se nao entender."""
+    texto = texto.strip()
+    if "=" in texto:
+        pi, real = (time.mktime(time.strptime(x.strip(), "%Y-%m-%d %H:%M:%S"))
+                    for x in texto.split("=", 1))
+        return real - pi
+    try:
+        return float(texto)
+    except ValueError:
+        pass
+    m = re.fullmatch(r"([+-])?\s*(?:(\d+(?:\.\d+)?)\s*d)?\s*(?:(\d+(?:\.\d+)?)\s*h)?"
+                     r"\s*(?:(\d+(?:\.\d+)?)\s*m(?:in)?)?\s*(?:(\d+(?:\.\d+)?)\s*s)?",
+                     texto)
+    if not m or not any(m.groups()[1:]):
+        raise ValueError(f"offset nao reconhecido: {texto!r}")
+    d, h, mi, s = (float(x or 0) for x in m.groups()[1:])
+    total = d * 86400 + h * 3600 + mi * 60 + s
+    return -total if m.group(1) == "-" else total
+
+
+def relatorio(pasta, horas=None, intervalo=30, saida=None, offset=None):
     """Linha do tempo: eventos, lacunas entre amostras e reboots, com hora da
-    Pi e hora real estimada. O offset usado em cada linha e' o da leitura de
-    relogio mais recente ate ali (o NTP pode acertar a Pi no meio do caminho);
-    antes da primeira leitura, vale a primeira."""
+    Pi e hora real estimada.
+
+    `offset` (segundos, hora real - hora da Pi) vem de fora, calibrado pelo
+    LOG_connections do PC, e vale para todas as linhas. Sem ele, usa as leituras
+    de relogio validas (Date do CPE plausivel): em cada linha, a mais recente
+    ate ali (o NTP pode acertar a Pi no meio do caminho); antes da primeira, a
+    primeira. Sem nenhuma, a coluna da hora real fica em branco."""
     saida = saida or sys.stdout
     regs = list(le_registros(pasta))
-    offsets = [r["offset_s"] for r in regs
-               if r.get("ev") == "relogio" and r.get("offset_s") is not None]
-    offset = offsets[0] if offsets else 0.0
+    fixo = offset is not None
+    validos = [r["offset_s"] for r in regs if _relogio_valido(r)]
+    invalidos = [r for r in regs if r.get("ev") == "relogio"
+                 and r.get("cpe_date") is not None and not _relogio_valido(r)]
+    if not fixo:
+        offset = validos[0] if validos else None
     if horas:
         corte = max((r.get("t", 0) for r in regs), default=0) - horas * 3600
         regs = [r for r in regs if r.get("t", 0) >= corte]
@@ -789,20 +836,37 @@ def relatorio(pasta, horas=None, intervalo=30, saida=None):
     def hora(t):
         return time.strftime("%d/%m %H:%M:%S", time.localtime(t))
 
-    final = offsets[-1] if offsets else 0.0
-    print(f"# {len(regs)} registros. Offset do relogio (Date do CPE - Pi): "
-          f"{final:+.0f} s = {final / 86400:+.2f} dias", file=saida)
+    def real(t):
+        return "      ?       " if offset is None else hora(t + offset)
+
+    if fixo:
+        print(f"# {len(regs)} registros. Offset informado: {offset:+.0f} s = "
+              f"{offset / 86400:+.2f} dias", file=saida)
+    elif validos:
+        print(f"# {len(regs)} registros. Offset do relogio (Date do CPE - Pi): "
+              f"{validos[-1]:+.0f} s = {validos[-1] / 86400:+.2f} dias", file=saida)
+    else:
+        print(f"# {len(regs)} registros. Sem hora real: nenhum Date do CPE "
+              f"confiavel", file=saida)
+        if invalidos:
+            ano = time.strftime("%Y", time.localtime(invalidos[-1]["cpe_date"]))
+            print(f"# (o CPE diz que estamos em {ano}: ele nao acerta a hora nesta "
+                  f"rede)", file=saida)
+        print("# Calibre pelo PC: a hora da Pi de uma conexao aberta (evento "
+              "conexao_servidor) contra o CONNECT\n# no LOG_connections, e rode de "
+              "novo com --offset \"AAAA-MM-DD HH:MM:SS=AAAA-MM-DD HH:MM:SS\" "
+              "(Pi=real).", file=saida)
     print("# hora da Pi        | hora real estimada | evento", file=saida)
     ultima = None
     for r in regs:
         t = r.get("t", 0)
-        if r.get("ev") == "relogio" and r.get("offset_s") is not None:
+        if not fixo and _relogio_valido(r):
             offset = r["offset_s"]
         if r.get("tipo") == "amostra":
             if ultima and ultima.get("boot") == r.get("boot") and \
                     r.get("mono", 0) - ultima.get("mono", 0) > 3 * intervalo:
                 buraco = r["mono"] - ultima["mono"]
-                print(f"{hora(t)} | {hora(t + offset)} | LACUNA de {buraco:.0f} s sem "
+                print(f"{hora(t)} | {real(t)} | LACUNA de {buraco:.0f} s sem "
                       f"amostra (agente ou sistema parado)", file=saida)
             ultima = r
             continue
@@ -811,9 +875,9 @@ def relatorio(pasta, horas=None, intervalo=30, saida=None):
         texto = json.dumps(dados, ensure_ascii=False)
         if len(texto) > 400:
             texto = texto[:400] + "..."
-        print(f"{hora(t)} | {hora(t + offset)} | {r.get('ev')} {texto}", file=saida)
+        print(f"{hora(t)} | {real(t)} | {r.get('ev')} {texto}", file=saida)
     if ultima:
-        print(f"# ultima amostra: {hora(ultima['t'])} (Pi) / {hora(ultima['t'] + offset)} "
+        print(f"# ultima amostra: {hora(ultima['t'])} (Pi) / {real(ultima['t']).strip()} "
               f"(real). gw={ultima.get('gw_ms')} conn="
               f"{[c['estado'] for c in ultima.get('conn', [])]} "
               f"cliente={[c['pid'] for c in ultima.get('cliente', [])]}", file=saida)
@@ -841,10 +905,14 @@ def main(argv=None):
     ap.add_argument("--relatorio", action="store_true")
     ap.add_argument("--horas", type=float, default=None)
     ap.add_argument("--dir", default=None, help="pasta dos registros (relatorio)")
+    ap.add_argument("--offset", type=parse_offset, default=None,
+                    help='hora real - hora da Pi: 40d1h4m, segundos, ou '
+                         '"AAAA-MM-DD HH:MM:SS=AAAA-MM-DD HH:MM:SS" (Pi=real)')
     args = ap.parse_args(argv)
     cfg = monta_cfg(args)
     if args.relatorio:
-        relatorio(args.dir or cfg["saida"], args.horas, cfg["intervalo"])
+        relatorio(args.dir or cfg["saida"], args.horas, cfg["intervalo"],
+                  offset=args.offset)
         return 0
     ag = Agente(cfg)
     if args.uma:

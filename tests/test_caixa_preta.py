@@ -6,6 +6,7 @@ os arquivos por caminho configuravel justamente para isto. As linhas de
 """
 import importlib.util
 import json
+import time
 import os
 from pathlib import Path
 
@@ -206,9 +207,12 @@ def _agente(tmp_path, monkeypatch, proc, sysfs):
     monkeypatch.setattr(cp, "ping_ms", lambda ip, timeout=2.0: respostas.get(
         "gw") if ip == cfg["gateway"] else 50.0)
     monkeypatch.setattr(cp, "tcp", lambda *a, **k: ("aberta", 3))
-    relogio = {"t": 1.0e9 - 40 * 86400, "m": 100.0}
-    # o CPE tem a hora certa; a Pi esta 40 dias atrasada
-    monkeypatch.setattr(cp, "http_data", lambda ip: (200, relogio["t"] + 40 * 86400))
+    relogio = {"t": 1.79e9 - 40 * 86400, "m": 100.0, "cpe": 40 * 86400}
+    # por padrao o CPE tem a hora certa (set/2026) e a Pi esta 40 dias atrasada;
+    # relogio["cpe"] = None faz o CPE voltar a 2023, como a Elsys sem NTP
+    monkeypatch.setattr(cp, "http_data", lambda ip: (200, relogio["t"] + relogio["cpe"]
+                                                     if relogio["cpe"] is not None
+                                                     else 1690840658.0))
     monkeypatch.setattr(cp, "throttled", lambda *a, **k: "0x0")
     ag = cp.Agente(cfg, agora=lambda: relogio["t"], mono=lambda: relogio["m"])
     return ag, cfg, respostas, relogio
@@ -288,6 +292,52 @@ def test_relatorio_mostra_eventos_lacuna_e_hora_real(tmp_path, monkeypatch, caps
     assert "LACUNA de 600 s" in out
     assert "+40.00 dias" in out
     assert "estado_inicial" in out
+
+
+def test_relatorio_ignora_o_relogio_da_elsys_sem_ntp(tmp_path, monkeypatch, capsys):
+    """14/10/2026: a Elsys da 102 dizia 31/07/2023 e o relatorio mostrou 2023
+    como hora real. Date implausivel nao e' referencia."""
+    proc, sysfs = _proc(tmp_path)
+    ag, cfg, _, relogio = _agente(tmp_path, monkeypatch, proc, sysfs)
+    relogio["cpe"] = None
+    ag.inicio()
+    ag.ciclo()
+    rel = [e for e in _eventos(cfg) if e["ev"] == "relogio"][0]
+    assert rel["valido"] is False
+    cp.relatorio(cfg["saida"])
+    out = capsys.readouterr().out
+    assert "Sem hora real" in out and "2023" in out and "--offset" in out
+    assert "/07 " not in out.split("# hora da Pi")[1]     # nenhuma data de 2023
+
+
+def test_relatorio_com_offset_calibrado_pelo_pc(tmp_path, monkeypatch, capsys):
+    proc, sysfs = _proc(tmp_path)
+    ag, cfg, _, relogio = _agente(tmp_path, monkeypatch, proc, sysfs)
+    relogio["cpe"] = None
+    ag.inicio()
+    ag.ciclo()
+    cp.relatorio(cfg["saida"], offset=3600.0)
+    out = capsys.readouterr().out
+    assert "Offset informado: +3600 s" in out
+    pi = time.strftime("%d/%m %H:%M:%S", time.localtime(relogio["t"]))
+    real = time.strftime("%d/%m %H:%M:%S", time.localtime(relogio["t"] + 3600))
+    assert f"{pi} | {real} | estado_inicial" in out
+
+
+def test_parse_offset():
+    assert cp.parse_offset("3460000") == 3460000
+    assert cp.parse_offset("-90") == -90
+    assert cp.parse_offset("40d1h4m") == 40 * 86400 + 3600 + 240
+    assert cp.parse_offset("40d 01h04m05s") == 40 * 86400 + 3600 + 245
+    assert cp.parse_offset("-2h") == -7200
+    assert cp.parse_offset("2026-09-04 21:29:58=2026-10-14 22:34:03") == \
+        40 * 86400 + 3600 + 4 * 60 + 5
+    for ruim in ("", "abc", "40x"):
+        try:
+            cp.parse_offset(ruim)
+        except ValueError:
+            continue
+        raise AssertionError(ruim)
 
 
 def test_tcp_sai_da_porta_local_pedida_e_distingue_recusa():
