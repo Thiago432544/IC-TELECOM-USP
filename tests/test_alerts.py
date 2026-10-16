@@ -61,13 +61,20 @@ def test_disk_realerts_daily_not_halfhourly():
     assert e.evaluate(1000 + 7200, s) == []                   # 2h: nada
     assert kinds(e.evaluate(1000 + 86401, s)) == [("disk", "pc")]
 
-def test_queda_sustentada_reinsiste_e_diz_a_duracao():
+def test_queda_sustentada_nao_insiste_e_a_volta_diz_quanto_durou():
+    """16/10/2026: uma mensagem quando cai (aos 3 min sem frames), outra quando
+    volta, nada no meio. Com a volta sempre avisada, o silencio depois do
+    "caiu" ja quer dizer "continua fora"."""
     e = AlertEngine(CFG)
-    assert kinds(e.evaluate(1000, snap({"102": cam(age=200)}))) == [("down", "102")]
-    assert e.evaluate(1000 + 1799, snap({"102": cam(age=2000)})) == []
-    out = e.evaluate(1000 + 1801, snap({"102": cam(age=54000)}))
-    assert kinds(out) == [("down", "102")]
-    assert "15h" in out[0].text          # e nao "900 min"
+    caiu = e.evaluate(1000, snap({"102": cam(age=200)}))
+    assert kinds(caiu) == [("down", "102")]
+    assert "SEM FRAMES ha 3min" in caiu[0].text
+    for t, idade in ((1000 + 1801, 2000), (1000 + 3601, 3800), (1000 + 54000, 54200)):
+        assert e.evaluate(t, snap({"102": cam(age=idade)})) == []
+    volta = e.evaluate(1000 + 54105, snap({"102": cam(age=5)}))
+    assert kinds(volta) == [("recovered", "102")]
+    # ultimo frame em 1000-200=800, primeiro de volta em 55105-5=55100: 15h05
+    assert "fora por 15h05" in volta[0].text       # e nao "905 min"
 
 def test_flapping_cala_o_par_down_recovered():
     e = AlertEngine(CFG)
@@ -98,22 +105,37 @@ def test_group_down_sobrevive_ao_flapping():
     assert "105" in out[-1].text and "106" in out[-1].text
 
 
-def test_o_primeiro_down_notifica_e_os_lembretes_vao_calados():
-    """Insistir nao e' acordar: quem ja recebeu o primeiro aviso nao precisa do
-    celular vibrando de meia em meia hora a noite inteira."""
+def test_queda_e_volta_notificam_o_celular():
     e = AlertEngine(CFG)
     primeiro = e.evaluate(1000, snap({"102": cam(age=200)}))
     assert kinds(primeiro) == [("down", "102")]
     assert primeiro[0].silent is False
-
-    lembrete = e.evaluate(1000 + 1801, snap({"102": cam(age=2000)}))
-    assert kinds(lembrete) == [("down", "102")]
-    assert lembrete[0].silent is True
-
-    # a volta e' novidade, nao lembrete: essa notifica
+    assert e.evaluate(1000 + 1801, snap({"102": cam(age=2000)})) == []
     volta = e.evaluate(1000 + 1900, snap({"102": cam(age=5)}))
     assert kinds(volta) == [("recovered", "102")]
     assert volta[0].silent is False
+
+
+def test_quedas_curtas_repetidas_avisam_cada_uma():
+    """A 102 em 15-16/10: ~6 quedas de LTE de 5 min, cada uma resolvida pelo
+    watchdog. Cada queda e' um par caiu/voltou, mesmo dentro de 30 min."""
+    e = AlertEngine(CFG)
+    t = 1000
+    for _ in range(3):
+        assert kinds(e.evaluate(t, snap({"102": cam(age=190)}))) == [("down", "102")]
+        volta = e.evaluate(t + 150, snap({"102": cam(age=5)}))
+        assert kinds(volta) == [("recovered", "102")]
+        assert "fora por 5min" in volta[0].text
+        t += 600
+
+
+def test_volta_de_quem_ja_estava_fora_no_restart_diz_a_queda_inteira():
+    e = AlertEngine(CFG)
+    e.prime(1000, snap({"106": cam(age=2 * 86400)}))
+    assert e.evaluate(5000, snap({"106": cam(age=2 * 86400 + 4000)})) == []
+    volta = e.evaluate(9000, snap({"106": cam(age=10)}))
+    assert kinds(volta) == [("recovered", "106")]
+    assert "fora por 2d2h" in volta[0].text
 
 
 def test_queda_simultanea_notifica_mesmo_sendo_repeticao_de_um_lembrete():

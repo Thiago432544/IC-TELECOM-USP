@@ -47,15 +47,22 @@ class Alert:
 
 
 def _texto_down(cam: str, age: Optional[float]) -> str:
-    """"869 min" nao se le. Na terceira insistencia de uma queda longa, a
-    duracao e' a unica coisa nova na mensagem - precisa sair legivel."""
+    """"869 min" nao se le: a duracao sai legivel ("20min", "15h05")."""
     return f"Camera {cam} SEM FRAMES ha {fmt_dur(age or 0)}."
+
+
+def _texto_volta(cam: str, fora_s: Optional[float]) -> str:
+    if fora_s is None or fora_s <= 0:
+        return f"Camera {cam} voltou a enviar frames."
+    return f"Camera {cam} voltou a enviar frames (fora por {fmt_dur(fora_s)})."
 
 
 class AlertEngine:
     def __init__(self, cfg: AlertCfg):
         self.cfg = cfg
         self._down: set[str] = set()
+        # hora do ultimo frame antes de cada queda: a volta diz quanto durou
+        self._down_since: dict[str, float] = {}
         # cameras cujo down/recovered foi calado pelo flapping - guardadas para
         # que a estabilizacao ainda renda uma mensagem no fim da tempestade
         self._mudo: set[str] = set()
@@ -89,13 +96,14 @@ class AlertEngine:
         mostrou as duas anexadas, com o radio de pe e uplink zero. O que estava
         morto era a Raspberry das duas.
 
-        Quem cair depois disto alerta normalmente; quem ja estava fora reaparece
-        no lembrete de queda sustentada, sem acusar ninguem.
+        Quem cair depois disto alerta normalmente; de quem ja estava fora, a
+        proxima mensagem e' a da volta (com a duracao inteira da queda).
         """
         for cam, st in snap.cameras.items():
             idade = st.last_frame_age_s
             if idade is not None and idade >= self.cfg.down_after_s:
                 self._down.add(cam)
+                self._down_since[cam] = now - idade
                 self._last_sent[(cam, "down")] = now
 
     # -- avaliacao -------------------------------------------------------
@@ -115,33 +123,34 @@ class AlertEngine:
             # caiu de vez virou uma linha no meio. O flapping ja e' o alerta.
             flapando = st.disconnects_15min >= self.cfg.flap_count
 
+            # Uma mensagem por queda e uma pela volta, nada no meio. Ate
+            # 16/10/2026 a queda sustentada insistia a cada `realert_s`; com a
+            # volta sempre avisada, o silencio depois do "caiu" ja quer dizer
+            # "continua fora", e o lembrete de meia em meia hora era so ruido.
             if is_down and cam not in self._down:
                 self._down.add(cam)
+                self._down_since[cam] = now - age
                 caiu.append(cam)
                 if flapando:
                     self._mudo.add(cam)
                 else:
                     avisar.append(cam)
-            elif is_down and not flapando and self._ok_to_send(now, cam, "down"):
-                # Queda sustentada tem que insistir: sem isto, uma camera fora
-                # ha 15h gera uma unica mensagem, e o silencio depois dela e'
-                # indistinguivel de problema resolvido.
-                #
-                # Insistir, porem, nao e' acordar. Quem recebeu o primeiro
-                # aviso ja sabe da queda; vibrar de meia em meia hora a noite
-                # inteira so ensina a ignorar o alerta - e ai o proximo, o que
-                # importa, tambem passa batido. O lembrete fica no chat, mudo,
-                # para quem for olhar. So o primeiro down notifica.
-                out.append(Alert("down", cam, _texto_down(cam, age), True,
-                                 silent=True))
+            elif is_down and cam in self._mudo and not flapando:
+                # a tempestade passou e ela ficou fora: o aviso que o flapping
+                # calou sai agora, uma vez
+                self._mudo.discard(cam)
+                self._last_sent[(cam, "down")] = now
+                out.append(Alert("down", cam, _texto_down(cam, age), True))
             elif not is_down and cam in self._down and age is not None and age < 60:
                 self._down.discard(cam)
                 self._clear(cam, "down")
+                desde = self._down_since.pop(cam, None)
+                fora = None if desde is None else (now - age) - desde
                 if flapando:
                     self._mudo.add(cam)
                 elif self._ok_to_send(now, cam, "recovered", interval=1):
-                    out.append(Alert("recovered", cam,
-                                     f"Camera {cam} voltou a enviar frames.", False))
+                    out.append(Alert("recovered", cam, _texto_volta(cam, fora),
+                                     False))
 
             if cam in self._mudo and not is_down and not flapando:
                 # fim da tempestade: quem ficou calado precisa de um encerramento
