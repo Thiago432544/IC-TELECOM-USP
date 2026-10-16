@@ -140,6 +140,24 @@ Na 105 (Teltonika) o `router.conf` com modelo, usuário e senha precisa existir
 antes — o instalador avisa. A 105 já tem uma cópia blindada própria; conferir
 com o time antes de trocar.
 
+### O `watchdog_test.py` e o firmware da Elsys
+
+Desde 16/10/2026 a Elsys da 102 roda um firmware novo, com tela de login e o
+botão de reiniciar oculto. O `watchdog_test.py` do repositório reconhece os
+dois firmwares pela página. O novo exige a senha num `router.conf` ao lado do
+script — **nunca no código**, o repositório é público:
+
+```bash
+cd ~/Desktop/Porto_de_Santos_2025/PRINCIPAL
+printf 'usuario = admin\nsenha = <senha de campo da Elsys>\n' > router.conf
+chmod 600 router.conf
+```
+
+Validar sem derrubar nada: `python3 watchdog_test.py --seco` faz o login e
+acha o botão sem clicar. A saída diz o firmware, o botão achado e termina em
+`--seco ok`. Depois de qualquer atualização de firmware, rodar de novo.
+Nenhum botão com cara de reset de fábrica é clicado.
+
 ## Do lado do PC do SPA
 
 - O monitor precisa estar no ar para o lado do servidor da linha do tempo

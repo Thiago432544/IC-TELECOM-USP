@@ -21,6 +21,11 @@ if [ ! -f "$PRINCIPAL/router.conf" ] && ip route show default | grep -q "192.168
     echo "AVISO: o gateway e' 192.168.11.1 (Teltonika). Crie $PRINCIPAL/router.conf"
     echo "       com modelo/usuario/senha antes de iniciar o servico (ver watchdog_test.py)."
 fi
+if ! grep -qs "^ *senha *= *[^ ]" "$PRINCIPAL/router.conf"; then
+    echo "AVISO: router.conf sem senha. A Elsys de firmware novo (tela de login, 102"
+    echo "       desde 16/10/2026) so reinicia com 'usuario = admin' e 'senha = ...'"
+    echo "       em $PRINCIPAL/router.conf. Conferir: python3 $PRINCIPAL/watchdog_test.py --seco"
+fi
 
 echo "== unit systemd =="
 cp "$HERE/camera-client.service" /etc/systemd/system/camera-client.service
