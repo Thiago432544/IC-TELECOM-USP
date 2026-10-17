@@ -353,3 +353,239 @@ def test_tcp_sai_da_porta_local_pedida_e_distingue_recusa():
     c.close()
     srv.close()
     assert cp.tcp("127.0.0.1", porta, 2)[0] == "recusada"
+
+
+# ------------------------------------------------------------ radio Elsys ---
+
+STATUS_ELSYS = """<script>
+                window.ip_protocol=_(null,'729|Conectado');
+                window.nivel_sinal=_(null,'-64 dBm');
+                window.nivel_sinal_percent=_(null,'99%');
+		window.imei='999999999999999';
+		window.tipo_rede_movel='LTE';
+		window.levelQuality='-5 dB';
+		window.iccid = '0000000000000000000F';
+</script><span class="nivel-3g">-64 dBm (RSRP)</span>"""
+
+LOGIN_ELSYS = """<title>Elsys - Login</title><form id="loginForm" method="POST"
+action="http://192.168.11.254/boafrm/loginForm"><input name="username">
+<input name="password"><input type="hidden" name="user_hash">
+<input type="hidden" name="pass_hash"></form>"""
+
+
+def test_status_da_elsys_vira_rsrp_rsrq_sem_imei_nem_iccid():
+    r = cp.parse_status_elsys(STATUS_ELSYS)
+    assert r == {"rsrp": -64.0, "rsrq": -5.0, "pct": 99.0, "con": "Conectado", "rede": "LTE"}
+    assert "999999999999999" not in json.dumps(r)
+    assert cp.parse_status_elsys(LOGIN_ELSYS) is None
+    assert cp.pagina_de_login(LOGIN_ELSYS)
+
+
+def test_sem_sinal_vira_rsrp_none():
+    html = STATUS_ELSYS.replace("'-64 dBm'", "'Sem Sinal'").replace("729|Conectado", "730|Desconectado")
+    r = cp.parse_status_elsys(html)
+    assert r["rsrp"] is None and r["con"] == "Desconectado"
+
+
+def _elsys_falsa(senha="segredo", basic=False):
+    """Servidor HTTP local que se comporta como a Elsys: firmware novo (login
+    por formulario com sha256 e cookie) ou antigo com Basic auth."""
+    import hashlib
+    import http.server
+    import threading
+    import urllib.parse
+    conta = {"posts": 0, "gets": 0}
+    h = lambda t: hashlib.sha256(t.encode()).hexdigest()      # noqa: E731
+
+    class H(http.server.BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def _manda(self, corpo, codigo=200, extra=()):
+            self.send_response(codigo)
+            for k, v in extra:
+                self.send_header(k, v)
+            self.send_header("Content-Type", "text/html")
+            self.end_headers()
+            self.wfile.write(corpo.encode())
+
+        def do_GET(self):
+            conta["gets"] += 1
+            if basic:
+                import base64
+                ok = "Basic " + base64.b64encode(f"admin:{senha}".encode()).decode()
+                if self.headers.get("Authorization") != ok:
+                    return self._manda("nao", 401, [("WWW-Authenticate", 'Basic realm="x"')])
+                return self._manda(STATUS_ELSYS)
+            if "SESSION=ok" in (self.headers.get("Cookie") or ""):
+                return self._manda(STATUS_ELSYS)
+            self._manda(LOGIN_ELSYS)
+
+        def do_POST(self):
+            conta["posts"] += 1
+            n = int(self.headers.get("Content-Length") or 0)
+            d = urllib.parse.parse_qs(self.rfile.read(n).decode(), keep_blank_values=True)
+            certo = (d.get("username") == [""] and d.get("password") == [""]
+                     and d.get("user_hash") == [h("admin")] and d.get("pass_hash") == [h(senha)])
+            if certo:
+                return self._manda("", 302, [("Location", "/index.html"),
+                                             ("Set-Cookie", "SESSION=ok; Path=/")])
+            self._manda(LOGIN_ELSYS)
+
+    srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    url = f"http://127.0.0.1:{srv.server_address[1]}/index.html?status"
+    return srv, url, conta
+
+
+def test_leitor_faz_o_login_com_sha256_e_reusa_a_sessao(tmp_path):
+    srv, url, conta = _elsys_falsa()
+    try:
+        conf = tmp_path / "router.conf"
+        conf.write_text("usuario = admin\nsenha = segredo   # do watchdog\n")
+        leitor = cp.LeitorElsys(url, str(conf))
+        assert leitor.le()["rsrp"] == -64.0
+        assert leitor.le()["rsrq"] == -5.0
+        assert leitor.logins == 1 and conta["posts"] == 1      # sessao reaproveitada
+    finally:
+        srv.shutdown()
+
+
+def test_leitor_sem_senha_ou_com_senha_errada_diz_o_que_houve(tmp_path):
+    srv, url, _ = _elsys_falsa()
+    try:
+        for conteudo, esperado in (("", "nao tem 'senha'"), ("senha = errada\n", "login recusado")):
+            conf = tmp_path / "router.conf"
+            conf.write_text(conteudo)
+            try:
+                cp.LeitorElsys(url, str(conf)).le()
+            except RuntimeError as e:
+                assert esperado in str(e)
+            else:
+                raise AssertionError(conteudo)
+    finally:
+        srv.shutdown()
+
+
+def test_firmware_antigo_com_basic_auth(tmp_path):
+    srv, url, _ = _elsys_falsa(basic=True)
+    try:
+        conf = tmp_path / "router.conf"
+        conf.write_text("senha = segredo\n")
+        assert cp.LeitorElsys(url, str(conf)).le()["rsrp"] == -64.0
+    finally:
+        srv.shutdown()
+
+
+class _LeitorFalso:
+    def __init__(self, valores):
+        self.valores = list(valores)
+
+    def le(self):
+        v = self.valores.pop(0)
+        if isinstance(v, Exception):
+            raise v
+        return {"rsrp": v, "rsrq": -5.0, "pct": 99.0,
+                "con": "Conectado" if v is not None else "Desconectado", "rede": "LTE"}
+
+
+def _radios(cfg):
+    p = Path(cfg["saida"]) / "radio.jsonl"
+    return [json.loads(x) for x in p.read_text().splitlines()] if p.exists() else []
+
+
+def test_agente_grava_o_radio_e_avisa_quando_o_sinal_cai_e_volta(tmp_path, monkeypatch):
+    proc, sysfs = _proc(tmp_path)
+    ag, cfg, _, relogio = _agente(tmp_path, monkeypatch, proc, sysfs)
+    leitor = _LeitorFalso([-64.0] * 12 + [-80.0, -82.0, -66.0])
+    for _ in range(15):
+        relogio["t"] += 5
+        relogio["m"] += 5
+        ag.radio(leitor)
+    nomes = [e["ev"] for e in _eventos(cfg)]
+    assert nomes == ["radio_inicial", "radio_caiu", "radio_voltou"]
+    caiu = [e for e in _eventos(cfg) if e["ev"] == "radio_caiu"][0]
+    assert caiu["rsrp"] == -80.0 and caiu["base"] == -64.0
+    assert len(_radios(cfg)) == 15
+    # nada disso entra na linha do tempo como amostra: so os eventos
+    assert all(r.get("tipo") != "radio" for r in _eventos(cfg))
+
+
+def test_radio_para_enquanto_o_watchdog_reinicia_a_elsys(tmp_path, monkeypatch):
+    proc, sysfs = _proc(tmp_path)
+    ag, cfg, _, _ = _agente(tmp_path, monkeypatch, proc, sysfs)
+    (Path(cfg["base"]) / "router.lock").write_text("123")
+    assert ag.radio(_LeitorFalso([-64.0])) is None
+    assert _radios(cfg) == []
+
+
+def test_leitura_que_falha_espaca_e_avisa_uma_vez(tmp_path, monkeypatch):
+    proc, sysfs = _proc(tmp_path)
+    ag, cfg, _, _ = _agente(tmp_path, monkeypatch, proc, sysfs)
+    leitor = _LeitorFalso([RuntimeError("sem senha")] * 6 + [-64.0])
+    passos = []
+    for _ in range(7):
+        ag.radio(leitor)
+        passos.append(ag.passo_radio())
+    assert passos[:6] == [10.0, 20.0, 40.0, 80.0, 160.0, 300.0] and passos[6] == 5.0
+    nomes = [e["ev"] for e in _eventos(cfg)]
+    assert nomes == ["radio_sem_leitura", "radio_leitura_voltou"]
+
+
+def _queda_com_radio(tmp_path, serie):
+    """Linha do tempo com um wan_perdida em t0 e leituras de radio a cada 5 s."""
+    pasta = tmp_path / "out"
+    t0 = 1.79e9
+    reg = cp.Registro(str(pasta))
+    reg.grava({"tipo": "evento", "t": t0, "mono": 0, "boot": "b", "cam": "102",
+               "ev": "wan_perdida"})
+    rr = cp.Registro(str(pasta), nome="radio.jsonl", prefixo="radio-")
+    for i, v in enumerate(serie):
+        rr.grava({"t": t0 - 90 + 5 * i, "rsrp": v, "rsrq": -5.0,
+                  "con": "Conectado" if v is not None else "Desconectado"})
+    return str(pasta)
+
+
+def test_quedas_separa_obstaculo_de_elsys(tmp_path, capsys):
+    obstaculo = [-64.0] * 9 + [-70.0, -78.0, -86.0] + [None] * 7
+    cp.relatorio_quedas(_queda_com_radio(tmp_path / "a", obstaculo))
+    out = capsys.readouterr().out
+    assert "caiu 22 dB" in out and "obstaculo provavel" in out
+
+    elsys = [-64.0] * 12 + [None] * 7
+    cp.relatorio_quedas(_queda_com_radio(tmp_path / "b", elsys))
+    out = capsys.readouterr().out
+    assert "estava estavel" in out and "aponta para a Elsys" in out
+
+
+def test_quedas_sem_radio_explica_o_que_falta(tmp_path, capsys):
+    pasta = tmp_path / "out"
+    cp.Registro(str(pasta)).grava({"tipo": "evento", "t": 1.79e9, "ev": "wan_perdida"})
+    cp.relatorio_quedas(str(pasta))
+    out = capsys.readouterr().out
+    assert "sem leituras de radio" in out and "--radio" in out
+
+
+def test_laco_le_o_radio_a_cada_5_s_entre_ciclos_de_30(tmp_path, monkeypatch):
+    proc, sysfs = _proc(tmp_path)
+    ag, cfg, _, relogio = _agente(tmp_path, monkeypatch, proc, sysfs)
+    ag.leitor = _LeitorFalso([-64.0] * 100)
+    ciclos = []
+    original = ag.ciclo
+    monkeypatch.setattr(ag, "ciclo", lambda: ciclos.append(relogio["m"]) or original())
+
+    class Fim(Exception):
+        pass
+
+    def dorme(s):
+        if relogio["m"] >= 100.0 + 90:
+            raise Fim
+        relogio["m"] += s
+        relogio["t"] += s
+    monkeypatch.setattr(cp.time, "sleep", dorme)
+    try:
+        ag.laco()
+    except Fim:
+        pass
+    assert len(ciclos) == 4                        # 0, 30, 60, 90 s
+    assert 18 <= len(_radios(cfg)) <= 20           # a cada 5 s em 90 s

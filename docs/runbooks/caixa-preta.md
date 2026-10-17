@@ -103,6 +103,37 @@ o link cair.
 Suspender durante manutenção: `sudo touch /etc/auto-reparo.pausa` (retomar:
 `sudo rm /etc/auto-reparo.pausa`).
 
+## Sinal da Elsys — RSRP a cada 5 s (17/10/2026)
+
+A caixa-preta lê RSRP e RSRQ da página de status da Elsys pela LAN, a cada
+`radio_s` segundos (padrão 5). Funciona com o LTE fora, que é quando importa.
+A pergunta que isso responde: na hora da queda, o sinal tinha caído antes
+(obstáculo, como um caminhão) ou estava bom e o tráfego parou mesmo assim (a
+Elsys)?
+
+- O firmware novo pede login: a caixa-preta usa o **mesmo `router.conf`** do
+  `watchdog_test.py` (`usuario = admin`, `senha = ...`, ao lado do script do
+  cliente). Sem ele, registra `radio_sem_leitura` e passa a tentar só a cada
+  5 min.
+- Enquanto o watchdog reinicia a Elsys (`router.lock`), a leitura para.
+- Cada leitura vai para `/var/log/caixa-preta/radio.jsonl` (~1,2 MB/dia),
+  separado da linha do tempo. Nela entram só `radio_caiu`/`radio_voltou` (RSRP
+  10 dB abaixo da linha de base) e falhas de leitura.
+- A página traz IMEI e ICCID; eles nunca vão para o registro.
+- Se alguém precisar usar a página da Elsys no navegador da Pi e a sessão cair
+  a toda hora, pare a caixa-preta durante o uso (`sudo systemctl stop
+  caixa-preta`, e `start` depois).
+
+```bash
+python3 /opt/caixa-preta/caixa_preta.py --radio            # uma leitura: testa o login
+tail -3 /var/log/caixa-preta/radio.jsonl                   # uma linha a cada 5 s
+python3 /opt/caixa-preta/caixa_preta.py --quedas --horas 24 # RSRP em volta de cada queda
+```
+
+O `--quedas` mostra, para cada `wan_perdida`, as leituras de 90 s antes a 30 s
+depois e um veredito: "o sinal caiu N dB antes da queda: obstáculo provável"
+ou "o sinal estava estável antes da queda: aponta para a Elsys".
+
 ## Nível 2 — cliente sob systemd (recomendado; decisão do time)
 
 Muda como o cliente roda. Ganho: o erro que mata o cliente fica gravado, o
@@ -222,6 +253,9 @@ de um `boot_novo`, calibre de novo.
 | `throttled` diferente de `0x0` | subtensão ou temperatura |
 | `reparo` seguido de `caminho_ok` | o auto-reparo destravou; `resolvido_por` diz com qual degrau |
 | `reparo` repetido sem `caminho_ok` | o problema não se resolve de dentro da Pi: rádio, eNodeB, energia da Elsys ou o PC do SPA |
+| `radio_caiu` pouco antes de `wan_perdida` | o sinal despencou antes da queda: obstáculo (confirme com `--quedas` e as fotos) |
+| `wan_perdida` sem `radio_caiu` antes | o rádio estava bom quando o tráfego parou: a Elsys |
+| `radio_sem_leitura` | a caixa-preta não consegue ler a página da Elsys: `router.conf` sem senha, senha errada, ou a Elsys fora da LAN |
 | `wan_perdida` com o gateway respondendo, e `caminho_ruim` com `erro:101` | **a Elsys perdeu o LTE**: ela responde "rede inalcançável" para o PC (102, 14/10 22:28) |
 | `router_log` "reinicializando roteador", depois `gateway_perdido` e `Link is Down` no kernel | o watchdog do cliente reiniciou a Elsys de verdade (só funciona com o Chrome abrindo: cliente num terminal do VNC ou o `watchdog_test.py` do repositório) |
 | dois "reinicializando" seguidos, com o LTE voltando entre eles | o watchdog original reiniciando a cada tentativa: o segundo reinício derruba o LTE que acabou de voltar |

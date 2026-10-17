@@ -44,11 +44,26 @@ Uso:
     python3 caixa_preta.py --relatorio --horas 6        # so as ultimas 6 h
     python3 caixa_preta.py --relatorio --offset 40d1h4m # hora real = Pi + offset
     python3 caixa_preta.py --relatorio --offset "2026-09-04 21:29:58=2026-10-14 22:34:03"
+    python3 caixa_preta.py --radio                      # le o sinal da Elsys uma vez
+    python3 caixa_preta.py --quedas --horas 24          # RSRP em volta de cada queda
+
+Radio (17/10/2026): a cada `radio_s` segundos le RSRP e RSRQ da pagina de status
+da Elsys, pela LAN - funciona com o LTE fora, que e' quando importa. O firmware
+novo pede login (formulario com sha256 do usuario e da senha); a senha sai do
+mesmo router.conf do watchdog_test.py, nunca daqui. Cada leitura vai para
+radio.jsonl, separado da linha do tempo; nela entram so os eventos radio_caiu /
+radio_voltou (RSRP 10 dB abaixo da linha de base) e falhas de leitura. Enquanto
+o watchdog reinicia a Elsys (router.lock), a leitura para, para nao disputar a
+sessao. --quedas responde a pergunta de 17/10: o sinal caiu antes da queda
+(obstaculo) ou estava bom e o trafego parou mesmo assim (a Elsys)?
 """
 import argparse
+import base64
 import email.utils
 import glob
+import hashlib
 import http.client
+import http.cookiejar
 import json
 import os
 import re
@@ -58,8 +73,11 @@ import subprocess
 import sys
 import time
 import traceback
+import urllib.error
+import urllib.parse
+import urllib.request
 
-VERSAO = "2026-10-14"
+VERSAO = "2026-10-17"
 
 PADRAO = {
     "camera": "",
@@ -78,6 +96,9 @@ PADRAO = {
     "padrao_cliente": "Cliente",
     "rotacao_mb": 20,
     "manter_arquivos": 100,
+    "radio_s": 5,                      # 0 desliga a leitura do sinal da Elsys
+    "radio_url": "",                   # vazio = http://<gateway>/index.html?status
+    "router_conf": "",                 # vazio = <base>/router.conf (o do watchdog)
 }
 CONF = "/etc/caixa-preta.conf"
 
@@ -515,12 +536,13 @@ def historico(cfg, maximo_linhas=200, maximo_falhas=50):
 class Registro:
     """JSONL com fsync por linha e rotacao por tamanho."""
 
-    def __init__(self, pasta, rotacao_mb=20, manter=100):
+    def __init__(self, pasta, rotacao_mb=20, manter=100, nome="atual.jsonl", prefixo="cp-"):
         self.pasta = pasta
         self.limite = int(rotacao_mb) * 1024 * 1024
         self.manter = int(manter)
+        self.prefixo = prefixo
         os.makedirs(pasta, exist_ok=True)
-        self.atual = os.path.join(pasta, "atual.jsonl")
+        self.atual = os.path.join(pasta, nome)
 
     def grava(self, reg):
         linha = json.dumps(reg, ensure_ascii=False, separators=(",", ":")) + "\n"
@@ -532,17 +554,152 @@ class Registro:
             self._roda()
 
     def _roda(self):
-        nome = os.path.join(self.pasta, time.strftime("cp-%Y%m%d-%H%M%S.jsonl"))
+        nome = os.path.join(self.pasta,
+                            time.strftime(self.prefixo + "%Y%m%d-%H%M%S.jsonl"))
         while os.path.exists(nome):
             nome = nome.replace(".jsonl", "_.jsonl")
         os.replace(self.atual, nome)
-        antigos = sorted(glob.glob(os.path.join(self.pasta, "cp-*.jsonl")),
+        antigos = sorted(glob.glob(os.path.join(self.pasta, self.prefixo + "*.jsonl")),
                          key=os.path.getmtime)
         for p in antigos[:-self.manter] if self.manter else []:
             try:
                 os.unlink(p)
             except OSError:
                 pass
+
+
+# ------------------------------------------------------------- radio Elsys ---
+
+# Os valores vem escritos no HTML da pagina de status (o JS so os copia para a
+# tela): window.nivel_sinal=_(null,'-64 dBm'), window.levelQuality='-5 dB'.
+# So o que serve ao enlace e' extraido - a mesma pagina traz IMEI e ICCID, que
+# nunca vao para o registro.
+RX_RADIO = {
+    "rsrp": re.compile(r"nivel_sinal=_\(null,'([^']*)'\)"),
+    "rsrq": re.compile(r"levelQuality='([^']*)'"),
+    "pct": re.compile(r"nivel_sinal_percent=_\(null,'([^']*)'\)"),
+    "con": re.compile(r"ip_protocol=_\(null,'([^']*)'\)"),
+    "rede": re.compile(r"tipo_rede_movel='([^']*)'"),
+}
+RADIO_QUEDA_DB = 10          # RSRP esta' abaixo da linha de base: radio_caiu
+RADIO_VOLTA_DB = 5           # e voltou para perto dela: radio_voltou
+RADIO_BASE_N = 12            # linha de base: mediana das ultimas 12 leituras boas
+RADIO_RECUO_MAX_S = 300      # leitura falhando: espaca ate' 5 min
+
+
+def _numero(txt):
+    m = re.search(r"-?\d+(?:\.\d+)?", txt or "")
+    return float(m.group()) if m else None
+
+
+def pagina_de_login(html):
+    return "loginForm" in html or "<title>Elsys - Login" in html
+
+
+def parse_status_elsys(html):
+    """RSRP, RSRQ, % de sinal e estado da conexao; None se nao for a pagina."""
+    if pagina_de_login(html):
+        return None
+    bruto = {}
+    for k, rx in RX_RADIO.items():
+        m = rx.search(html)
+        bruto[k] = m.group(1) if m else None
+    if bruto["rsrp"] is None and bruto["con"] is None:
+        return None
+    return {"rsrp": _numero(bruto["rsrp"]),
+            "rsrq": _numero(bruto["rsrq"]),
+            "pct": _numero(bruto["pct"]),
+            "con": (bruto["con"] or "").split("|")[-1] or None,
+            "rede": bruto["rede"]}
+
+
+def le_router_conf(caminho):
+    """usuario/senha do router.conf do watchdog (k = v, # comenta)."""
+    cfg = {}
+    try:
+        with open(caminho) as f:
+            for linha in f:
+                linha = linha.split("#", 1)[0].strip()
+                if "=" in linha:
+                    k, v = linha.split("=", 1)
+                    cfg[k.strip()] = v.strip()
+    except OSError:
+        pass
+    return cfg
+
+
+def _sha256(texto):
+    return hashlib.sha256(texto.encode("utf-8")).hexdigest()
+
+
+class LeitorElsys:
+    """Le a pagina de status da Elsys. Firmware novo: login por formulario
+    (/boafrm/loginForm com sha256 do usuario e da senha, como o JS da pagina
+    faz), sessao em cookie, refeito quando a pagina volta a ser a de login.
+    Firmware antigo: a pagina abre direto, ou com Basic auth."""
+
+    def __init__(self, url, router_conf, timeout=4.0):
+        self.url = url
+        partes = urllib.parse.urlsplit(url)
+        self.raiz = f"{partes.scheme}://{partes.netloc}"
+        self.router_conf = router_conf
+        self.timeout = timeout
+        self.jar = http.cookiejar.CookieJar()
+        self.opener = urllib.request.build_opener(
+            urllib.request.HTTPCookieProcessor(self.jar))
+        self.logins = 0
+        self._basic = None
+
+    def _cred(self):
+        c = le_router_conf(self.router_conf)
+        return c.get("usuario") or "admin", c.get("senha") or ""
+
+    def _get(self):
+        req = urllib.request.Request(self.url)
+        if self._basic:
+            req.add_header("Authorization", self._basic)
+        try:
+            with self.opener.open(req, timeout=self.timeout) as r:
+                return r.read(300000).decode("utf-8", "replace")
+        except urllib.error.HTTPError as e:
+            if e.code != 401 or self._basic:
+                raise
+            usuario, senha = self._cred()
+            self._basic = "Basic " + base64.b64encode(
+                f"{usuario}:{senha}".encode()).decode()
+            return self._get()
+
+    def _login(self):
+        usuario, senha = self._cred()
+        if not senha:
+            raise RuntimeError(f"a Elsys pede login e {self.router_conf} nao tem 'senha'")
+        dados = urllib.parse.urlencode({"username": "", "password": "",
+                                        "user_hash": _sha256(usuario),
+                                        "pass_hash": _sha256(senha)}).encode()
+        req = urllib.request.Request(self.raiz + "/boafrm/loginForm", data=dados,
+                                     method="POST")
+        with self.opener.open(req, timeout=self.timeout) as r:
+            r.read(300000)
+        self.logins += 1
+
+    def le(self):
+        html = self._get()
+        if pagina_de_login(html):
+            self._login()
+            html = self._get()
+            if pagina_de_login(html):
+                raise RuntimeError("login recusado pela Elsys")
+        r = parse_status_elsys(html)
+        if r is None:
+            raise RuntimeError("pagina de status nao reconhecida")
+        return r
+
+
+def _arquivo_fresco(caminho, validade_s):
+    try:
+        return time.time() - os.path.getmtime(caminho) < validade_s
+    except OSError:
+        return False
 
 
 def carrega_estado(caminho):
@@ -583,6 +740,19 @@ class Agente:
         self.fila_presa = 0
         self.fila_avisada = False
         self._porta = 0
+        self.radio_s = float(cfg.get("radio_s") or 0)
+        self.leitor = None
+        self.reg_radio = None
+        if self.radio_s > 0:
+            url = cfg.get("radio_url") or f"http://{cfg['gateway']}/index.html?status"
+            conf = cfg.get("router_conf") or os.path.join(cfg["base"], "router.conf")
+            self.leitor = LeitorElsys(url, conf)
+            self.reg_radio = Registro(cfg["saida"], cfg["rotacao_mb"], cfg["manter_arquivos"],
+                                      nome="radio.jsonl", prefixo="radio-")
+        self.radio_ok = None
+        self.radio_falhas = 0
+        self.radio_base = []
+        self.radio_baixo = None          # linha de base no momento do radio_caiu
 
     # -- registro
     def _base(self, tipo):
@@ -670,6 +840,56 @@ class Agente:
         salva_estado(cfg["estado"], self.estado)
         return a
 
+    # -- radio da Elsys
+    def passo_radio(self):
+        if self.radio_falhas == 0:
+            return self.radio_s
+        return min(RADIO_RECUO_MAX_S, self.radio_s * 2 ** min(self.radio_falhas, 8))
+
+    def radio(self, leitor=None):
+        leitor = leitor or self.leitor
+        if leitor is None:
+            return None
+        # O watchdog esta' logado na Elsys reiniciando-a: nao disputar a sessao.
+        if _arquivo_fresco(os.path.join(self.cfg["base"], "router.lock"), 300):
+            return None
+        r = {"t": round(self.agora(), 1), "mono": round(self.mono(), 1)}
+        try:
+            r.update(leitor.le())
+            ok = True
+        except Exception as e:                               # noqa: BLE001
+            r["erro"] = f"{type(e).__name__}: {e}"[:160]
+            ok = False
+        self.reg_radio.grava(r)
+        self._transicoes_radio(r, ok)
+        return r
+
+    def _transicoes_radio(self, r, ok):
+        if ok != self.radio_ok:
+            if not ok:
+                self.evento("radio_sem_leitura", erro=r.get("erro"))
+            elif self.radio_ok is None:
+                self.evento("radio_inicial", rsrp=r.get("rsrp"), rsrq=r.get("rsrq"),
+                            con=r.get("con"))
+            else:
+                self.evento("radio_leitura_voltou", rsrp=r.get("rsrp"), con=r.get("con"))
+            self.radio_ok = ok
+        self.radio_falhas = 0 if ok else self.radio_falhas + 1
+        if not ok:
+            return
+        rsrp = r.get("rsrp")
+        base = sorted(self.radio_base)[len(self.radio_base) // 2] if self.radio_base else None
+        if self.radio_baixo is None:
+            if base is not None and (rsrp is None or base - rsrp >= RADIO_QUEDA_DB):
+                self.radio_baixo = base
+                self.evento("radio_caiu", rsrp=rsrp, base=base, con=r.get("con"))
+            elif rsrp is not None:
+                self.radio_base = (self.radio_base + [rsrp])[-RADIO_BASE_N:]
+        elif rsrp is not None and self.radio_baixo - rsrp < RADIO_VOLTA_DB:
+            self.evento("radio_voltou", rsrp=rsrp, base=self.radio_baixo)
+            self.radio_baixo = None
+            self.radio_base = (self.radio_base + [rsrp])[-RADIO_BASE_N:]
+
     def _proxima_porta(self):
         self._porta = (self._porta + 1) % len(PORTAS_CAIXA_PRETA)
         return PORTAS_CAIXA_PRETA[self._porta]
@@ -746,31 +966,37 @@ class Agente:
             self.fila_avisada = False
         self.ant = a
 
+    def _protegido(self, f):
+        try:
+            f()
+        except Exception:                                    # noqa: BLE001
+            try:
+                self.evento("erro", tb=traceback.format_exc()[-1500:])
+            except Exception:                                # noqa: BLE001
+                pass
+
     def laco(self):
         self.inicio()
         intervalo = float(self.cfg["intervalo"])
-        prox = self.mono()
+        prox = prox_radio = self.mono()
         while True:
-            try:
-                self.ciclo()
-            except Exception:                                # noqa: BLE001
-                try:
-                    self.evento("erro", tb=traceback.format_exc()[-1500:])
-                except Exception:                            # noqa: BLE001
-                    pass
-            prox += intervalo
-            espera = prox - self.mono()
-            if espera < 0:
-                prox = self.mono()
-                espera = 0
-            time.sleep(espera)
+            if self.mono() >= prox:
+                self._protegido(self.ciclo)
+                prox += intervalo
+                if prox < self.mono():
+                    prox = self.mono()
+            if self.leitor is not None and self.mono() >= prox_radio:
+                self._protegido(self.radio)
+                prox_radio = self.mono() + self.passo_radio()
+            alvo = min(prox, prox_radio) if self.leitor is not None else prox
+            time.sleep(max(0.0, alvo - self.mono()))
 
 
 # --------------------------------------------------------------- relatorio ---
 
-def le_registros(pasta):
-    arquivos = sorted(glob.glob(os.path.join(pasta, "cp-*.jsonl")), key=os.path.getmtime)
-    arquivos.append(os.path.join(pasta, "atual.jsonl"))
+def le_registros(pasta, prefixo="cp-", nome="atual.jsonl"):
+    arquivos = sorted(glob.glob(os.path.join(pasta, prefixo + "*.jsonl")), key=os.path.getmtime)
+    arquivos.append(os.path.join(pasta, nome))
     for p in arquivos:
         try:
             with open(p, encoding="utf-8", errors="replace") as f:
@@ -883,6 +1109,68 @@ def relatorio(pasta, horas=None, intervalo=30, saida=None, offset=None):
               f"cliente={[c['pid'] for c in ultima.get('cliente', [])]}", file=saida)
 
 
+def _sumiu(r):
+    """Leitura que mostra o LTE fora na propria Elsys."""
+    return "erro" not in r and (r.get("rsrp") is None or
+                                not (r.get("con") or "").lower().startswith("conectado"))
+
+
+def veredito_queda(janela, t0):
+    """O sinal caiu antes de sumir (obstaculo) ou estava bom ate o fim (Elsys)?
+
+    `janela` sao as leituras de radio em volta do evento em `t0`. A queda conta
+    a partir da primeira leitura em que a propria Elsys mostra o LTE fora; antes
+    dela, compara a primeira metade (linha de base) com o pior valor."""
+    sumiu = next((r for r in janela if _sumiu(r)), None)
+    limite = sumiu["t"] if sumiu else t0
+    validos = [r["rsrp"] for r in janela
+               if r["t"] < limite and "erro" not in r and r.get("rsrp") is not None]
+    if len(validos) < 3:
+        return "sem leituras de radio suficientes antes da queda"
+    metade = validos[:max(1, len(validos) // 2)]
+    base = sorted(metade)[len(metade) // 2]
+    pior = min(validos)
+    if base - pior >= RADIO_QUEDA_DB:
+        return (f"o sinal caiu {base - pior:.0f} dB antes da queda (de {base:.0f} para "
+                f"{pior:.0f} dBm): obstaculo provavel")
+    return (f"o sinal estava estavel antes da queda ({pior:.0f} a {max(validos):.0f} dBm): "
+            f"o radio estava bom - aponta para a Elsys")
+
+
+def relatorio_quedas(pasta, horas=None, offset=None, saida=None, antes=90, depois=30):
+    """Para cada wan_perdida, as leituras de radio de `antes` s antes a `depois`
+    s depois, e o veredito. O wan_perdida sai do ciclo de 30 s; a janela cobre
+    essa folga, e a hora exata da queda vem da propria Elsys."""
+    saida = saida or sys.stdout
+    evs = [r for r in le_registros(pasta)
+           if r.get("tipo") == "evento" and r.get("ev") == "wan_perdida"]
+    radio = sorted((r for r in le_registros(pasta, "radio-", "radio.jsonl") if "t" in r),
+                   key=lambda r: r["t"])
+    if horas:
+        fim = max([r["t"] for r in radio] + [e["t"] for e in evs] + [0])
+        evs = [e for e in evs if e["t"] >= fim - horas * 3600]
+
+    def hora(t):
+        return time.strftime("%d/%m %H:%M:%S", time.localtime(t))
+
+    if not evs:
+        print("# nenhuma queda (wan_perdida) no periodo", file=saida)
+    if not radio:
+        print("# sem leituras de radio (radio.jsonl): radio_s = 0, ou a leitura nunca "
+              "funcionou - teste com --radio", file=saida)
+    for ev in evs:
+        t0 = ev["t"]
+        real = f" / {hora(t0 + offset)} real" if offset is not None else ""
+        print(f"\n== queda {hora(t0)} (Pi){real} ==", file=saida)
+        janela = [r for r in radio if t0 - antes <= r["t"] <= t0 + depois]
+        for r in janela:
+            fim = r.get("erro") or r.get("con") or ""
+            print(f"  {time.strftime('%H:%M:%S', time.localtime(r['t']))} "
+                  f"{r['t'] - t0:+5.0f}s  rsrp {r.get('rsrp')}  rsrq {r.get('rsrq')}  {fim}",
+                  file=saida)
+        print(f"  -> {veredito_queda(janela, t0)}", file=saida)
+
+
 # ----------------------------------------------------------------- entrada ---
 
 def monta_cfg(args):
@@ -892,6 +1180,7 @@ def monta_cfg(args):
         cfg["camera"] = args.camera
     for k in ("porta", "intervalo", "rotacao_mb", "manter_arquivos"):
         cfg[k] = int(cfg[k])
+    cfg["radio_s"] = float(cfg.get("radio_s") or 0)
     if not cfg["wan"] and cfg["camera"]:
         cfg["wan"] = f"192.168.10.{cfg['camera']}"
     return cfg
@@ -905,6 +1194,10 @@ def main(argv=None):
     ap.add_argument("--relatorio", action="store_true")
     ap.add_argument("--horas", type=float, default=None)
     ap.add_argument("--dir", default=None, help="pasta dos registros (relatorio)")
+    ap.add_argument("--radio", action="store_true",
+                    help="le o sinal da Elsys uma vez e imprime (testa o login)")
+    ap.add_argument("--quedas", action="store_true",
+                    help="RSRP em volta de cada queda (wan_perdida), com veredito")
     ap.add_argument("--offset", type=parse_offset, default=None,
                     help='hora real - hora da Pi: 40d1h4m, segundos, ou '
                          '"AAAA-MM-DD HH:MM:SS=AAAA-MM-DD HH:MM:SS" (Pi=real)')
@@ -914,6 +1207,18 @@ def main(argv=None):
         relatorio(args.dir or cfg["saida"], args.horas, cfg["intervalo"],
                   offset=args.offset)
         return 0
+    if args.quedas:
+        relatorio_quedas(args.dir or cfg["saida"], args.horas, offset=args.offset)
+        return 0
+    if args.radio:
+        url = cfg.get("radio_url") or f"http://{cfg['gateway']}/index.html?status"
+        conf = cfg.get("router_conf") or os.path.join(cfg["base"], "router.conf")
+        try:
+            print(json.dumps(LeitorElsys(url, conf).le(), ensure_ascii=False))
+            return 0
+        except Exception as e:                               # noqa: BLE001
+            print(f"falhou: {type(e).__name__}: {e}", file=sys.stderr)
+            return 1
     ag = Agente(cfg)
     if args.uma:
         ag.inicio()
