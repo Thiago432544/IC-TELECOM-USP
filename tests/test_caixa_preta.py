@@ -589,3 +589,16 @@ def test_laco_le_o_radio_a_cada_5_s_entre_ciclos_de_30(tmp_path, monkeypatch):
         pass
     assert len(ciclos) == 4                        # 0, 30, 60, 90 s
     assert 18 <= len(_radios(cfg)) <= 20           # a cada 5 s em 90 s
+
+
+def test_login_recusado_so_tenta_de_novo_depois_de_1_hora(tmp_path, monkeypatch):
+    """Tentativa errada a cada 5 min pode bloquear a conta na Elsys - e o
+    watchdog usa o mesmo login para reiniciar a Elsys na hora da queda."""
+    proc, sysfs = _proc(tmp_path)
+    ag, cfg, _, _ = _agente(tmp_path, monkeypatch, proc, sysfs)
+    ag.radio(_LeitorFalso([cp.LoginRecusado("login recusado pela Elsys")]))
+    assert ag.passo_radio() == 3600
+    ag.radio(_LeitorFalso([RuntimeError("timeout")]))
+    assert ag.passo_radio() < 3600                 # erro comum volta ao recuo normal
+    ag.radio(_LeitorFalso([-64.0]))
+    assert ag.passo_radio() == 5.0

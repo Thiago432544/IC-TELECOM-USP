@@ -585,6 +585,14 @@ RADIO_QUEDA_DB = 10          # RSRP esta' abaixo da linha de base: radio_caiu
 RADIO_VOLTA_DB = 5           # e voltou para perto dela: radio_voltou
 RADIO_BASE_N = 12            # linha de base: mediana das ultimas 12 leituras boas
 RADIO_RECUO_MAX_S = 300      # leitura falhando: espaca ate' 5 min
+# Login recusado: so tenta de novo depois de 1 h. Se a Elsys bloquear a conta
+# depois de varias tentativas erradas, quem perde e' o watchdog, que usa o
+# mesmo login para reiniciar a Elsys na hora da queda.
+RADIO_RECUO_LOGIN_S = 3600
+
+
+class LoginRecusado(RuntimeError):
+    pass
 
 
 def _numero(txt):
@@ -672,7 +680,7 @@ class LeitorElsys:
     def _login(self):
         usuario, senha = self._cred()
         if not senha:
-            raise RuntimeError(f"a Elsys pede login e {self.router_conf} nao tem 'senha'")
+            raise LoginRecusado(f"a Elsys pede login e {self.router_conf} nao tem 'senha'")
         dados = urllib.parse.urlencode({"username": "", "password": "",
                                         "user_hash": _sha256(usuario),
                                         "pass_hash": _sha256(senha)}).encode()
@@ -688,7 +696,7 @@ class LeitorElsys:
             self._login()
             html = self._get()
             if pagina_de_login(html):
-                raise RuntimeError("login recusado pela Elsys")
+                raise LoginRecusado("login recusado pela Elsys")
         r = parse_status_elsys(html)
         if r is None:
             raise RuntimeError("pagina de status nao reconhecida")
@@ -751,6 +759,7 @@ class Agente:
                                       nome="radio.jsonl", prefixo="radio-")
         self.radio_ok = None
         self.radio_falhas = 0
+        self.radio_login_recusado = False
         self.radio_base = []
         self.radio_baixo = None          # linha de base no momento do radio_caiu
 
@@ -842,6 +851,8 @@ class Agente:
 
     # -- radio da Elsys
     def passo_radio(self):
+        if self.radio_login_recusado:
+            return RADIO_RECUO_LOGIN_S
         if self.radio_falhas == 0:
             return self.radio_s
         return min(RADIO_RECUO_MAX_S, self.radio_s * 2 ** min(self.radio_falhas, 8))
@@ -854,12 +865,15 @@ class Agente:
         if _arquivo_fresco(os.path.join(self.cfg["base"], "router.lock"), 300):
             return None
         r = {"t": round(self.agora(), 1), "mono": round(self.mono(), 1)}
+        recusado = False
         try:
             r.update(leitor.le())
             ok = True
         except Exception as e:                               # noqa: BLE001
             r["erro"] = f"{type(e).__name__}: {e}"[:160]
             ok = False
+            recusado = isinstance(e, LoginRecusado)
+        self.radio_login_recusado = recusado
         self.reg_radio.grava(r)
         self._transicoes_radio(r, ok)
         return r
