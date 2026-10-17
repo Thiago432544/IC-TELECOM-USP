@@ -97,7 +97,7 @@ PADRAO = {
     "rotacao_mb": 20,
     "manter_arquivos": 100,
     "radio_s": 5,                      # 0 desliga a leitura do sinal da Elsys
-    "radio_url": "",                   # vazio = http://<gateway>/index.html?status
+    "radio_url": "",                   # vazio = http://<gateway>/status.html
     "router_conf": "",                 # vazio = <base>/router.conf (o do watchdog)
 }
 CONF = "/etc/caixa-preta.conf"
@@ -570,8 +570,10 @@ class Registro:
 
 # ------------------------------------------------------------- radio Elsys ---
 
-# Os valores vem escritos no HTML da pagina de status (o JS so os copia para a
-# tela): window.nivel_sinal=_(null,'-64 dBm'), window.levelQuality='-5 dB'.
+# Os valores vem escritos no HTML de /status.html (o JS so os copia para a
+# tela): window.nivel_sinal=_(null,'-64 dBm'), window.levelQuality='-5 dB'. O
+# index.html?status que o navegador abre e' so a moldura: ele carrega o
+# status.html por jQuery - lido direto, o index nao traz os valores (102, 17/10).
 # So o que serve ao enlace e' extraido - a mesma pagina traz IMEI e ICCID, que
 # nunca vao para o registro.
 RX_RADIO = {
@@ -752,7 +754,7 @@ class Agente:
         self.leitor = None
         self.reg_radio = None
         if self.radio_s > 0:
-            url = cfg.get("radio_url") or f"http://{cfg['gateway']}/index.html?status"
+            url = cfg.get("radio_url") or f"http://{cfg['gateway']}/status.html"
             conf = cfg.get("router_conf") or os.path.join(cfg["base"], "router.conf")
             self.leitor = LeitorElsys(url, conf)
             self.reg_radio = Registro(cfg["saida"], cfg["rotacao_mb"], cfg["manter_arquivos"],
@@ -1225,7 +1227,7 @@ def main(argv=None):
         relatorio_quedas(args.dir or cfg["saida"], args.horas, offset=args.offset)
         return 0
     if args.radio:
-        url = cfg.get("radio_url") or f"http://{cfg['gateway']}/index.html?status"
+        url = cfg.get("radio_url") or f"http://{cfg['gateway']}/status.html"
         conf = cfg.get("router_conf") or os.path.join(cfg["base"], "router.conf")
         try:
             print(json.dumps(LeitorElsys(url, conf).le(), ensure_ascii=False))
