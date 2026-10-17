@@ -217,9 +217,10 @@ para cruzar direto com o PC.
 ### Hora real
 
 O relógio da Pi está errado (sem RTC e sem NTP), e **o da Elsys também**: a
-rede da NLT não tem internet, a Elsys nunca acerta a hora, diz 2023 e volta
-horas a cada reinício (visto na 102 em 14/10). O relatório descarta esse
-relógio e deixa a coluna da hora real com `?`. Para preenchê-la, calibre pelo
+rede da NLT não tem internet, a Elsys nunca acerta a hora: dizia 2023 e voltava
+horas a cada reinício (102, 14/10); com o firmware novo passou a dizer março de
+2026 (17/10). O relatório nunca usa esse relógio e deixa a coluna da hora real
+com `?`. Para preenchê-la, calibre pelo
 PC do SPA, que tem a hora certa:
 
 1. No relatório, pegue um evento `conexao_servidor` em que a conexão abriu

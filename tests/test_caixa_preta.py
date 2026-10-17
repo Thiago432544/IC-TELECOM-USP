@@ -290,24 +290,30 @@ def test_relatorio_mostra_eventos_lacuna_e_hora_real(tmp_path, monkeypatch, caps
     cp.relatorio(cfg["saida"])
     out = capsys.readouterr().out
     assert "LACUNA de 600 s" in out
-    assert "+40.00 dias" in out
+    assert "Sem hora real" in out
     assert "estado_inicial" in out
 
 
-def test_relatorio_ignora_o_relogio_da_elsys_sem_ntp(tmp_path, monkeypatch, capsys):
+def test_relatorio_nunca_usa_o_relogio_da_elsys(tmp_path, monkeypatch, capsys):
     """14/10/2026: a Elsys da 102 dizia 31/07/2023 e o relatorio mostrou 2023
-    como hora real. Date implausivel nao e' referencia."""
-    proc, sysfs = _proc(tmp_path)
-    ag, cfg, _, relogio = _agente(tmp_path, monkeypatch, proc, sysfs)
-    relogio["cpe"] = None
-    ag.inicio()
-    ag.ciclo()
-    rel = [e for e in _eventos(cfg) if e["ev"] == "relogio"][0]
-    assert rel["valido"] is False
-    cp.relatorio(cfg["saida"])
-    out = capsys.readouterr().out
-    assert "Sem hora real" in out and "2023" in out and "--offset" in out
-    assert "/07 " not in out.split("# hora da Pi")[1]     # nenhuma data de 2023
+    como hora real. O filtro de data plausivel que veio depois foi enganado
+    em 17/10: com o firmware novo ela passou a dizer marco de 2026. Sem
+    internet, ela nunca acerta - so o --offset calibrado pelo PC vale."""
+    for cpe, ano in ((None, "2023"), (-182 * 86400, None), (40 * 86400, None)):
+        sub = tmp_path / f"c{cpe}"
+        sub.mkdir()
+        proc, sysfs = _proc(sub)
+        ag, cfg, _, relogio = _agente(sub, monkeypatch, proc, sysfs)
+        relogio["cpe"] = cpe
+        ag.inicio()
+        ag.ciclo()
+        cp.relatorio(cfg["saida"])
+        out = capsys.readouterr().out
+        assert "Sem hora real" in out and "--offset" in out
+        corpo = out.split("# hora da Pi")[1]
+        assert "|       ?        |" in corpo
+        if ano:
+            assert ano in out
 
 
 def test_relatorio_com_offset_calibrado_pelo_pc(tmp_path, monkeypatch, capsys):
