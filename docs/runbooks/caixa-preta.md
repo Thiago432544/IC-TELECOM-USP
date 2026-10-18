@@ -103,10 +103,12 @@ o link cair.
 Suspender durante manutenção: `sudo touch /etc/auto-reparo.pausa` (retomar:
 `sudo rm /etc/auto-reparo.pausa`).
 
-## Sinal da Elsys — RSRP a cada 5 s (17/10/2026)
+## Sinal da Elsys — RSRP a cada 30 s (17/10/2026)
 
 A caixa-preta lê RSRP e RSRQ da página de status da Elsys pela LAN, a cada
-`radio_s` segundos (padrão 5). Funciona com o LTE fora, que é quando importa.
+`radio_s` segundos (padrão 30; começou em 5 e foi espaçado em 18/10, quando a
+102 caiu de vez menos de um dia depois — até saber se há relação). Funciona
+com o LTE fora, que é quando importa.
 A pergunta que isso responde: na hora da queda, o sinal tinha caído antes
 (obstáculo, como um caminhão) ou estava bom e o tráfego parou mesmo assim (a
 Elsys)?
@@ -126,7 +128,7 @@ Elsys)?
 
 ```bash
 python3 /opt/caixa-preta/caixa_preta.py --radio            # uma leitura: testa o login
-tail -3 /var/log/caixa-preta/radio.jsonl                   # uma linha a cada 5 s
+tail -3 /var/log/caixa-preta/radio.jsonl                   # uma linha a cada 30 s
 python3 /opt/caixa-preta/caixa_preta.py --quedas --horas 24 # RSRP em volta de cada queda
 ```
 

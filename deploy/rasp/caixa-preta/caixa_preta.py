@@ -98,7 +98,10 @@ PADRAO = {
     "padrao_cliente": "Cliente",
     "rotacao_mb": 20,
     "manter_arquivos": 100,
-    "radio_s": 5,                      # 0 desliga a leitura do sinal da Elsys
+    # 30 s, nao 5: a pagina de status consulta o modem a cada pedido, e em
+    # 18/10 a 102 caiu de vez menos de um dia depois de a leitura a cada 5 s
+    # entrar. Ate saber se uma coisa tem a ver com a outra, leitura gentil.
+    "radio_s": 30,                     # 0 desliga a leitura do sinal da Elsys
     "radio_url": "",                   # vazio = http://<gateway>/status.html
     "router_conf": "",                 # vazio = <base>/router.conf (o do watchdog)
 }

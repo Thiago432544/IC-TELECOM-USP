@@ -528,6 +528,7 @@ def test_radio_para_enquanto_o_watchdog_reinicia_a_elsys(tmp_path, monkeypatch):
 def test_leitura_que_falha_espaca_e_avisa_uma_vez(tmp_path, monkeypatch):
     proc, sysfs = _proc(tmp_path)
     ag, cfg, _, _ = _agente(tmp_path, monkeypatch, proc, sysfs)
+    ag.radio_s = 5.0
     leitor = _LeitorFalso([RuntimeError("sem senha")] * 6 + [-64.0])
     passos = []
     for _ in range(7):
@@ -576,6 +577,7 @@ def test_laco_le_o_radio_a_cada_5_s_entre_ciclos_de_30(tmp_path, monkeypatch):
     proc, sysfs = _proc(tmp_path)
     ag, cfg, _, relogio = _agente(tmp_path, monkeypatch, proc, sysfs)
     ag.leitor = _LeitorFalso([-64.0] * 100)
+    ag.radio_s = 5.0
     ciclos = []
     original = ag.ciclo
     monkeypatch.setattr(ag, "ciclo", lambda: ciclos.append(relogio["m"]) or original())
@@ -607,4 +609,4 @@ def test_login_recusado_so_tenta_de_novo_depois_de_1_hora(tmp_path, monkeypatch)
     ag.radio(_LeitorFalso([RuntimeError("timeout")]))
     assert ag.passo_radio() < 3600                 # erro comum volta ao recuo normal
     ag.radio(_LeitorFalso([-64.0]))
-    assert ag.passo_radio() == 5.0
+    assert ag.passo_radio() == cp.PADRAO["radio_s"]
