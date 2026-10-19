@@ -49,7 +49,8 @@ Uso:
     python3 caixa_preta.py --radio                      # le o sinal da Elsys uma vez
     python3 caixa_preta.py --quedas --horas 24          # RSRP em volta de cada queda
 
-Radio (17/10/2026): a cada `radio_s` segundos le RSRP e RSRQ da pagina de status
+Radio (17/10/2026; DESLIGADO por padrao desde 19/10, ver PADRAO["radio_s"]):
+a cada `radio_s` segundos le RSRP e RSRQ da pagina de status
 da Elsys, pela LAN - funciona com o LTE fora, que e' quando importa. O firmware
 novo pede login (formulario com sha256 do usuario e da senha); a senha sai do
 mesmo router.conf do watchdog_test.py, nunca daqui. Cada leitura vai para
@@ -79,7 +80,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSAO = "2026-10-19"
+VERSAO = "2026-10-19b"
 
 PADRAO = {
     "camera": "",
@@ -98,10 +99,13 @@ PADRAO = {
     "padrao_cliente": "Cliente",
     "rotacao_mb": 20,
     "manter_arquivos": 100,
-    # 30 s, nao 5: a pagina de status consulta o modem a cada pedido, e em
-    # 18/10 a 102 caiu de vez menos de um dia depois de a leitura a cada 5 s
-    # entrar. Ate saber se uma coisa tem a ver com a outra, leitura gentil.
-    "radio_s": 30,                     # 0 desliga a leitura do sinal da Elsys
+    # Desligado por padrao (19/10). Na 102, 47 min depois de a leitura a cada
+    # 5 s comecar (17/10 12:43), a pagina da Elsys parou de responder (13:30) e
+    # nao voltou; quando o LTE caiu (18/10 03:38) o watchdog nao conseguiu o
+    # login para reinicia-la, ~65 vezes, e a queda durou 30 h. Nao esta provado
+    # que a leitura travou a pagina, mas o watchdog depende dela: so ligar
+    # (radio_s = 300, por ex.) numa Elsys de bancada ou depois de testada la.
+    "radio_s": 0,                      # 0 desliga a leitura do sinal da Elsys
     "radio_url": "",                   # vazio = http://<gateway>/status.html
     "router_conf": "",                 # vazio = <base>/router.conf (o do watchdog)
 }

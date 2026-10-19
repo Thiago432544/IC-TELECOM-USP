@@ -103,12 +103,20 @@ o link cair.
 Suspender durante manutenção: `sudo touch /etc/auto-reparo.pausa` (retomar:
 `sudo rm /etc/auto-reparo.pausa`).
 
-## Sinal da Elsys — RSRP a cada 30 s (17/10/2026)
+## Sinal da Elsys — leitura do RSRP (17/10/2026; desligada desde 19/10)
 
-A caixa-preta lê RSRP e RSRQ da página de status da Elsys pela LAN, a cada
-`radio_s` segundos (padrão 30; começou em 5 e foi espaçado em 18/10, quando a
-102 caiu de vez menos de um dia depois — até saber se há relação). Funciona
-com o LTE fora, que é quando importa.
+**Desligada por padrão.** Na 102, a página da Elsys parou de responder 47 min
+depois de a leitura a cada 5 s começar (17/10 12:43 → 13:30) e não voltou.
+Quando o LTE caiu (18/10 03:38), o watchdog não conseguiu fazer o login para
+reiniciar a Elsys — ~65 tentativas em 30 h — e a queda, que costuma durar
+5 min, durou até a energia ser cortada e religada em 19/10. Não está provado
+que a leitura travou a página, mas o watchdog depende dela. Só ligar
+(`radio_s = 300` em `/etc/caixa-preta.conf`, depois do instalador, que
+reescreve o arquivo) numa Elsys de bancada, ou em campo depois de dias de
+bancada sem a página travar.
+
+Ligada, a caixa-preta lê RSRP e RSRQ da página de status da Elsys pela LAN, a
+cada `radio_s` segundos. Funciona com o LTE fora, que é quando importa.
 A pergunta que isso responde: na hora da queda, o sinal tinha caído antes
 (obstáculo, como um caminhão) ou estava bom e o tráfego parou mesmo assim (a
 Elsys)?
@@ -118,7 +126,7 @@ Elsys)?
   cliente). Sem ele, registra `radio_sem_leitura` e passa a tentar só a cada
   5 min.
 - Enquanto o watchdog reinicia a Elsys (`router.lock`), a leitura para.
-- Cada leitura vai para `/var/log/caixa-preta/radio.jsonl` (~1,2 MB/dia),
+- Cada leitura vai para `/var/log/caixa-preta/radio.jsonl` (~0,2 MB/dia a cada 30 s),
   separado da linha do tempo. Nela entram só `radio_caiu`/`radio_voltou` (RSRP
   10 dB abaixo da linha de base) e falhas de leitura.
 - A página traz IMEI e ICCID; eles nunca vão para o registro.
@@ -128,7 +136,7 @@ Elsys)?
 
 ```bash
 python3 /opt/caixa-preta/caixa_preta.py --radio            # uma leitura: testa o login
-tail -3 /var/log/caixa-preta/radio.jsonl                   # uma linha a cada 30 s
+tail -3 /var/log/caixa-preta/radio.jsonl                   # uma linha a cada radio_s
 python3 /opt/caixa-preta/caixa_preta.py --quedas --horas 24 # RSRP em volta de cada queda
 ```
 

@@ -195,14 +195,14 @@ def test_registro_roda_e_mantem_so_os_mais_novos(tmp_path):
 
 # --------------------------------------------------------------- agente ---
 
-def _agente(tmp_path, monkeypatch, proc, sysfs):
+def _agente(tmp_path, monkeypatch, proc, sysfs, **extra):
     base, lf = tmp_path / "base", tmp_path / "lf"
     base.mkdir(exist_ok=True)
     lf.mkdir(exist_ok=True)
     (base / "router.log").write_text("reinicializando roteador\n")
     cfg = dict(cp.PADRAO, camera="102", wan="192.168.10.102", base=str(base),
                logs_failure=str(lf), saida=str(tmp_path / "out"),
-               estado=str(tmp_path / "estado.json"), proc=str(proc), sys=str(sysfs))
+               estado=str(tmp_path / "estado.json"), proc=str(proc), sys=str(sysfs), **extra)
     respostas = {"gw": 1.0}
     monkeypatch.setattr(cp, "ping_ms", lambda ip, timeout=2.0: respostas.get(
         "gw") if ip == cfg["gateway"] else 50.0)
@@ -502,7 +502,7 @@ def _radios(cfg):
 
 def test_agente_grava_o_radio_e_avisa_quando_o_sinal_cai_e_volta(tmp_path, monkeypatch):
     proc, sysfs = _proc(tmp_path)
-    ag, cfg, _, relogio = _agente(tmp_path, monkeypatch, proc, sysfs)
+    ag, cfg, _, relogio = _agente(tmp_path, monkeypatch, proc, sysfs, radio_s=30)
     leitor = _LeitorFalso([-64.0] * 12 + [-80.0, -82.0, -66.0])
     for _ in range(15):
         relogio["t"] += 5
@@ -519,7 +519,7 @@ def test_agente_grava_o_radio_e_avisa_quando_o_sinal_cai_e_volta(tmp_path, monke
 
 def test_radio_para_enquanto_o_watchdog_reinicia_a_elsys(tmp_path, monkeypatch):
     proc, sysfs = _proc(tmp_path)
-    ag, cfg, _, _ = _agente(tmp_path, monkeypatch, proc, sysfs)
+    ag, cfg, _, _ = _agente(tmp_path, monkeypatch, proc, sysfs, radio_s=30)
     (Path(cfg["base"]) / "router.lock").write_text("123")
     assert ag.radio(_LeitorFalso([-64.0])) is None
     assert _radios(cfg) == []
@@ -527,7 +527,7 @@ def test_radio_para_enquanto_o_watchdog_reinicia_a_elsys(tmp_path, monkeypatch):
 
 def test_leitura_que_falha_espaca_e_avisa_uma_vez(tmp_path, monkeypatch):
     proc, sysfs = _proc(tmp_path)
-    ag, cfg, _, _ = _agente(tmp_path, monkeypatch, proc, sysfs)
+    ag, cfg, _, _ = _agente(tmp_path, monkeypatch, proc, sysfs, radio_s=30)
     ag.radio_s = 5.0
     leitor = _LeitorFalso([RuntimeError("sem senha")] * 6 + [-64.0])
     passos = []
@@ -575,7 +575,7 @@ def test_quedas_sem_radio_explica_o_que_falta(tmp_path, capsys):
 
 def test_laco_le_o_radio_a_cada_5_s_entre_ciclos_de_30(tmp_path, monkeypatch):
     proc, sysfs = _proc(tmp_path)
-    ag, cfg, _, relogio = _agente(tmp_path, monkeypatch, proc, sysfs)
+    ag, cfg, _, relogio = _agente(tmp_path, monkeypatch, proc, sysfs, radio_s=30)
     ag.leitor = _LeitorFalso([-64.0] * 100)
     ag.radio_s = 5.0
     ciclos = []
@@ -603,10 +603,21 @@ def test_login_recusado_so_tenta_de_novo_depois_de_1_hora(tmp_path, monkeypatch)
     """Tentativa errada a cada 5 min pode bloquear a conta na Elsys - e o
     watchdog usa o mesmo login para reiniciar a Elsys na hora da queda."""
     proc, sysfs = _proc(tmp_path)
-    ag, cfg, _, _ = _agente(tmp_path, monkeypatch, proc, sysfs)
+    ag, cfg, _, _ = _agente(tmp_path, monkeypatch, proc, sysfs, radio_s=30)
     ag.radio(_LeitorFalso([cp.LoginRecusado("login recusado pela Elsys")]))
     assert ag.passo_radio() == 3600
     ag.radio(_LeitorFalso([RuntimeError("timeout")]))
     assert ag.passo_radio() < 3600                 # erro comum volta ao recuo normal
     ag.radio(_LeitorFalso([-64.0]))
-    assert ag.passo_radio() == cp.PADRAO["radio_s"]
+    assert ag.passo_radio() == ag.radio_s
+
+
+def test_radio_desligado_por_padrao(tmp_path, monkeypatch):
+    """19/10: a pagina da Elsys parou de responder 47 min depois de a leitura
+    a cada 5 s comecar, e o watchdog nao conseguiu reinicia-la por 30 h. Sem
+    radio_s no conf, a caixa-preta nao toca na pagina da Elsys."""
+    assert cp.PADRAO["radio_s"] == 0
+    proc, sysfs = _proc(tmp_path)
+    ag, cfg, _, _ = _agente(tmp_path, monkeypatch, proc, sysfs)
+    assert ag.leitor is None and ag.reg_radio is None
+    assert ag.radio() is None
