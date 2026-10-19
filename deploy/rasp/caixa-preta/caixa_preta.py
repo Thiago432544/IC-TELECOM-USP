@@ -79,7 +79,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSAO = "2026-10-17"
+VERSAO = "2026-10-19"
 
 PADRAO = {
     "camera": "",
