@@ -46,6 +46,7 @@ Uso:
     python3 caixa_preta.py --relatorio --horas 6        # so as ultimas 6 h
     python3 caixa_preta.py --relatorio --offset 40d1h4m # hora real = Pi + offset
     python3 caixa_preta.py --relatorio --offset "2026-09-04 21:29:58=2026-10-14 22:34:03"
+    python3 caixa_preta.py --simples --minutos 30       # em frases, ultimos 30 min
     python3 caixa_preta.py --radio                      # le o sinal da Elsys uma vez
     python3 caixa_preta.py --quedas --horas 24          # RSRP em volta de cada queda
 
@@ -80,7 +81,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSAO = "2026-10-19b"
+VERSAO = "2026-10-19c"
 
 PADRAO = {
     "camera": "",
@@ -1112,6 +1113,255 @@ def relatorio(pasta, horas=None, intervalo=30, saida=None, offset=None):
               f"cliente={[c['pid'] for c in ultima.get('cliente', [])]}", file=saida)
 
 
+# ------------------------------------------------------ relatorio simples ---
+# --simples: a mesma linha do tempo em frases, para quem nao conhece os nomes
+# dos eventos. Esconde o que e' ruido para leitura (stacktrace do Selenium, o
+# relogio da Elsys, o arp que repete o gateway) e fecha com um resumo.
+
+_ROUTER_RUIDO = ("Stacktrace:", "  (Session info", "#")
+
+
+def _sem_hora(linha):
+    """'2026-09-09 08:28:47 | texto' -> 'texto' (o watchdog do repositorio)."""
+    if len(linha) > 22 and linha[4] == "-" and linha[19:22] == " | ":
+        return linha[22:]
+    return linha
+
+
+def _frase_router(linha):
+    linha = _sem_hora((linha or "").rstrip())
+    if not linha.strip() or linha.startswith(_ROUTER_RUIDO):
+        return None
+    baixo = linha.lower()
+    if "reinicializando roteador" in baixo:
+        return "Watchdog: vai reiniciar a Elsys"
+    if "reiniciado com sucesso" in baixo:
+        return "Watchdog: diz que reiniciou a Elsys"
+    if baixo.startswith("erro ao reiniciar"):
+        motivo = linha.split("Message:", 1)[-1].strip()
+        return f"Watchdog: FALHOU ao reiniciar a Elsys ({motivo[:90]})"
+    if baixo.startswith("pulando"):
+        return "Watchdog: nao reiniciou - a Elsys foi reiniciada ha menos de 10 min"
+    if "pagina da falha salva" in baixo:
+        return "Watchdog: guardou a tela da falha (router_erro.png)"
+    if "reboot clicado" in baixo:
+        return "Watchdog: clicou em Reiniciar na pagina da Elsys"
+    if "firmware novo" in baixo:
+        return "Watchdog: entrou na pagina da Elsys (firmware novo, com login)"
+    if "firmware antigo" in baixo:
+        return "Watchdog: entrou na pagina da Elsys (sem login)"
+    if "botao de reboot achado" in baixo:
+        return None
+    if baixo.startswith("--seco"):
+        return "Watchdog (teste --seco): login e botao ok, nada foi clicado"
+    return f"Watchdog: {linha[:120]}"
+
+
+def _tem(lista, estado):
+    return estado in (lista or [])
+
+
+def _frase_conexao(r):
+    de, para = r.get("de") or [], r.get("para") or []
+    if _tem(para, "ESTABLISHED") and not _tem(de, "ESTABLISHED"):
+        return "Camera CONECTOU ao servidor (voltou a transmitir)"
+    if _tem(de, "ESTABLISHED") and not _tem(para, "ESTABLISHED"):
+        presos = sum(c.get("txq", 0) for c in r.get("conn", []))
+        extra = f"; {presos / 1024:.0f} KB de frames presos sem sair" if presos > 1024 else ""
+        return f"A conexao da camera com o servidor CAIU{extra}"
+    if _tem(para, "SYN_SENT") and not _tem(para, "ESTABLISHED"):
+        return "O cliente esta tentando conectar ao servidor (sem resposta ainda)"
+    if not para:
+        return "Nenhuma conexao com o servidor"
+    if _tem(para, "ESTABLISHED"):
+        return None          # segue conectada; so' uma conexao velha fechando
+    return f"Conexao com o servidor: {'/'.join(de) or '-'} -> {'/'.join(para)}"
+
+
+def _frase_teste(res):
+    res = res[0] if isinstance(res, (list, tuple)) else res
+    res = str(res)
+    if res == "aberta" or res == "cliente_conectado":
+        return "ok"
+    if res.startswith("erro:101"):
+        return "rede inalcancavel (a Elsys esta sem LTE)"
+    if res.startswith("erro:111") or res == "recusada":
+        return "recusada"
+    if "timeout" in res or res.startswith("erro:110"):
+        return "sem resposta"
+    return res
+
+
+def _fmt_dur(s):
+    s = int(round(s))
+    if s < 60:
+        return f"{s} s"
+    if s < 3600:
+        return f"{s // 60} min {s % 60:02d} s"
+    return f"{s // 3600} h {s % 3600 // 60:02d} min"
+
+
+def frase_evento(r):
+    """Uma frase em portugues simples para o evento, ou None para esconder."""
+    ev, d = r.get("ev"), r
+    if ev in ("relogio", "arp_gateway", "historico"):
+        return None
+    if ev == "router_log":
+        return _frase_router(d.get("linha"))
+    if ev == "conexao_servidor":
+        return _frase_conexao(d)
+    if ev == "cabo":
+        return ("O cabo de rede da Pi voltou a ter sinal" if d.get("para") == "1"
+                else "O cabo de rede da Pi PERDEU o sinal (cabo solto, Elsys sem energia "
+                     "ou o auto-reparo derrubando o link)")
+    if ev == "reparo":
+        acao = {"renegociar_endereco": "pediu de novo o endereco de rede da Pi",
+                "derrubar_link": "desligou e religou a placa de rede da Pi por 15 s"
+                }.get(d.get("acao"), d.get("acao"))
+        return (f"Auto-reparo {acao}, depois de {_fmt_dur(d.get('fora_s', 0))} sem caminho "
+                f"(nao reinicia a Elsys)")
+    if ev == "reparo_pulado":
+        return "Auto-reparo nao agiu: atingiu o limite de acoes do dia"
+    if ev == "reparo_teria_agido":
+        return f"(modo observar) o auto-reparo teria feito: {d.get('acao')}"
+    if ev == "caminho_ruim":
+        return f"Auto-reparo: caminho ate o servidor fora ({_frase_teste(d.get('teste'))})"
+    if ev == "caminho_ok":
+        por = d.get("resolvido_por")
+        quem = f", resolvido pelo auto-reparo ({por})" if por else ""
+        return f"Auto-reparo: caminho ate o servidor de volta, apos {_fmt_dur(d.get('fora_s', 0))}{quem}"
+    if ev == "sonda_servidor":
+        return f"Teste de conexao ao servidor: {_frase_teste(d.get('resultado'))}"
+    if ev == "cpe_web":
+        return ("A pagina da Elsys voltou a responder" if d.get("para") == "aberta"
+                else f"A pagina da Elsys nao responde ({_frase_teste(d.get('para'))})")
+    if ev == "boot_novo":
+        ult = d.get("ultima_amostra_t")
+        quando = (" Ultimo registro antes de desligar: "
+                  + time.strftime("%d/%m %H:%M:%S", time.localtime(ult))) if ult else ""
+        return "A Pi LIGOU (foi reiniciada ou a energia voltou)." + quando
+    if ev == "inicio":
+        return f"Caixa-preta iniciou (versao {d.get('versao')})"
+    if ev == "auto_reparo_inicio":
+        return f"Auto-reparo iniciou (modo {d.get('modo')})"
+    if ev == "estado_inicial":
+        gw = "responde" if d.get("gw_ms") is not None else "NAO responde"
+        conn = [c.get("estado") for c in d.get("conn", [])]
+        cli = "rodando" if d.get("cliente") else "PARADO"
+        return (f"Estado ao iniciar: Elsys {gw} na rede local; camera "
+                f"{'conectada' if 'ESTABLISHED' in conn else 'NAO conectada'} ao servidor; "
+                f"cliente {cli}")
+    if ev == "cliente_novo":
+        return "O programa da camera (cliente) iniciou"
+    if ev == "cliente_sumiu":
+        return "O programa da camera (cliente) PAROU"
+    if ev == "logs_failure":
+        return f"O cliente da camera registrou uma falha: {d.get('motivo')}"
+    if ev == "fila_presa":
+        return "Os frames pararam de sair com a conexao aberta (o enlace morreu sem avisar)"
+    if ev == "fila_destravou":
+        return "Os frames voltaram a sair"
+    if ev == "throttled":
+        v = d.get("para") or d.get("valor")
+        return ("A Pi saiu da subtensao/superaquecimento" if v == "0x0"
+                else f"A Pi esta com SUBTENSAO ou SUPERAQUECIMENTO ({v})")
+    if ev == "radio_inicial":
+        return f"Primeira leitura do sinal: RSRP {d.get('rsrp')} dBm"
+    if ev == "radio_caiu":
+        return f"O SINAL CAIU: RSRP {d.get('rsrp')} dBm (normal: {d.get('base')})"
+    if ev == "radio_voltou":
+        return f"O sinal voltou ao normal: RSRP {d.get('rsrp')} dBm"
+    if ev == "radio_sem_leitura":
+        return f"Nao conseguiu ler o sinal na pagina da Elsys ({d.get('erro')})"
+    if ev == "radio_leitura_voltou":
+        return f"Voltou a ler o sinal: RSRP {d.get('rsrp')} dBm"
+    if ev == "vnc_reiniciado":
+        return "Auto-reparo reiniciou o VNC"
+    if ev == "pausado":
+        return "Auto-reparo PAUSADO (manutencao)"
+    if ev == "retomado":
+        return "Auto-reparo retomado"
+    simples = {
+        "wan_perdida": "A Elsys PERDEU O LTE (a camera ficou sem saida para o servidor)",
+        "wan_voltou": "O LTE da Elsys VOLTOU",
+        "gateway_perdido": "A Elsys SUMIU da rede local (reiniciando, sem energia ou cabo)",
+        "gateway_voltou": "A Elsys voltou a responder na rede local",
+    }
+    if ev in simples:
+        return simples[ev]
+    dados = {k: v for k, v in d.items() if k not in ("tipo", "t", "mono", "boot", "cam", "ev")}
+    return f"{ev} {json.dumps(dados, ensure_ascii=False)[:160]}"
+
+
+def relatorio_simples(pasta, horas=None, intervalo=30, saida=None, offset=None):
+    """Linha do tempo em frases, com um resumo no fim."""
+    saida = saida or sys.stdout
+    regs = list(le_registros(pasta))
+    if horas:
+        corte = max((r.get("t", 0) for r in regs), default=0) - horas * 3600
+        regs = [r for r in regs if r.get("t", 0) >= corte]
+
+    def hora(t):
+        return time.strftime("%d/%m %H:%M:%S", time.localtime(t + (offset or 0)))
+
+    qual = "hora real" if offset is not None else "hora da Pi (atrasada; use --offset)"
+    print(f"# {qual}  |  o que aconteceu", file=saida)
+    ultima = None
+    anterior = None
+    lte_fora = None
+    quedas, reinicios, falhas, boots = [], 0, 0, 0
+    for r in regs:
+        t = r.get("t", 0)
+        if r.get("tipo") == "amostra":
+            if ultima and ultima.get("boot") == r.get("boot") and \
+                    r.get("mono", 0) - ultima.get("mono", 0) > 3 * intervalo:
+                buraco = r["mono"] - ultima["mono"]
+                print(f"{hora(t)}  |  A caixa-preta ficou {_fmt_dur(buraco)} sem registrar "
+                      f"(Pi travada, desligada ou caixa-preta parada)", file=saida)
+            ultima = r
+            continue
+        ev = r.get("ev")
+        if ev == "wan_perdida":
+            lte_fora = t
+        elif ev == "boot_novo":
+            boots += 1
+            lte_fora = None
+        frase = frase_evento(r)
+        if ev == "wan_voltou" and lte_fora is not None:
+            quedas.append(t - lte_fora)
+            frase += f" (ficou fora {_fmt_dur(t - lte_fora)})"
+            lte_fora = None
+        if frase and frase.startswith("Watchdog: vai reiniciar"):
+            reinicios += 1
+        if frase and frase.startswith("Watchdog: FALHOU"):
+            falhas += 1
+        if not frase or frase == anterior:
+            continue
+        anterior = frase
+        print(f"{hora(t)}  |  {frase}", file=saida)
+
+    print("#", file=saida)
+    print("# RESUMO", file=saida)
+    if quedas:
+        print(f"#  quedas de LTE que voltaram: {len(quedas)} (mais curta "
+              f"{_fmt_dur(min(quedas))}, mais longa {_fmt_dur(max(quedas))})", file=saida)
+    else:
+        print("#  nenhuma queda de LTE que tenha voltado no periodo", file=saida)
+    if lte_fora is not None:
+        print(f"#  ATENCAO: o LTE caiu em {hora(lte_fora)} e nao voltou ate o fim do registro",
+              file=saida)
+    print(f"#  reinicios da Elsys pelo watchdog: {reinicios} tentados, {falhas} falharam",
+          file=saida)
+    if boots:
+        print(f"#  a Pi ligou {boots} vez(es) no periodo (reinicio ou falta de energia)",
+              file=saida)
+    if ultima:
+        conn = [c["estado"] for c in ultima.get("conn", [])]
+        print(f"#  ultimo registro {hora(ultima['t'])}: camera "
+              f"{'CONECTADA' if 'ESTABLISHED' in conn else 'NAO conectada'} ao servidor",
+              file=saida)
+
+
 def _sumiu(r):
     """Leitura que mostra o LTE fora na propria Elsys."""
     return "erro" not in r and (r.get("rsrp") is None or
@@ -1196,6 +1446,10 @@ def main(argv=None):
     ap.add_argument("--uma", action="store_true", help="um ciclo, imprime e sai")
     ap.add_argument("--relatorio", action="store_true")
     ap.add_argument("--horas", type=float, default=None)
+    ap.add_argument("--minutos", type=float, default=None,
+                    help="janela em minutos (ex.: --minutos 15), no lugar de --horas")
+    ap.add_argument("--simples", action="store_true",
+                    help="relatorio em frases, para quem nao conhece os eventos")
     ap.add_argument("--dir", default=None, help="pasta dos registros (relatorio)")
     ap.add_argument("--radio", action="store_true",
                     help="le o sinal da Elsys uma vez e imprime (testa o login)")
@@ -1206,6 +1460,12 @@ def main(argv=None):
                          '"AAAA-MM-DD HH:MM:SS=AAAA-MM-DD HH:MM:SS" (Pi=real)')
     args = ap.parse_args(argv)
     cfg = monta_cfg(args)
+    if args.minutos:
+        args.horas = args.minutos / 60
+    if args.simples:
+        relatorio_simples(args.dir or cfg["saida"], args.horas, cfg["intervalo"],
+                          offset=args.offset)
+        return 0
     if args.relatorio:
         relatorio(args.dir or cfg["saida"], args.horas, cfg["intervalo"],
                   offset=args.offset)

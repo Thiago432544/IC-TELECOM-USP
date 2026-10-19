@@ -621,3 +621,66 @@ def test_radio_desligado_por_padrao(tmp_path, monkeypatch):
     ag, cfg, _, _ = _agente(tmp_path, monkeypatch, proc, sysfs)
     assert ag.leitor is None and ag.reg_radio is None
     assert ag.radio() is None
+
+
+def _grava(pasta, linhas):
+    pasta.mkdir(parents=True, exist_ok=True)
+    with open(pasta / "atual.jsonl", "w", encoding="utf-8") as f:
+        for l in linhas:
+            f.write(json.dumps(l) + "\n")
+
+
+def test_relatorio_simples_em_frases_esconde_ruido_e_resume(tmp_path, capsys):
+    """O trecho de 15/10 (reinicio duplo) lido por um leigo."""
+    t0 = 1757126096.0
+    ev = lambda dt, nome, **d: dict(tipo="evento", t=t0 + dt, mono=dt, boot="b", cam="102",
+                                    ev=nome, **d)
+    am = lambda dt, **d: dict(tipo="amostra", t=t0 + dt, mono=dt, boot="b", cam="102", **d)
+    _grava(tmp_path / "out", [
+        am(0, conn=[{"estado": "ESTABLISHED"}]),
+        ev(0, "wan_perdida"),
+        ev(0, "logs_failure", arquivo="f.txt", motivo="erro no envio: timed out"),
+        ev(29, "caminho_ruim", origem="auto_reparo", teste="erro:101", gw_ms=1.4),
+        ev(30, "conexao_servidor", de=["ESTABLISHED"], para=["FIN_WAIT1"],
+           conn=[{"estado": "FIN_WAIT1", "txq": 979230}]),
+        ev(30, "router_log", linha="reinicializando roteador"),
+        ev(30, "router_log", linha="Stacktrace:"),
+        ev(30, "router_log", linha="#0 0x0055 <unknown>"),
+        ev(58, "gateway_perdido", arp=None),
+        ev(58, "arp_gateway", de="ok", para=None),
+        ev(90, "relogio", http_status=200, cpe_date=1690794432.0),
+        ev(148, "wan_voltou"),
+        ev(148, "conexao_servidor", de=["SYN_SENT"], para=["ESTABLISHED"],
+           conn=[{"estado": "ESTABLISHED", "txq": 0}]),
+        ev(148, "router_log", linha="2026-09-09 07:28:23 | Erro ao reiniciar o roteador: "
+                                    "Message: no such element"),
+        am(150, conn=[{"estado": "ESTABLISHED"}]),
+    ])
+    cp.relatorio_simples(str(tmp_path / "out"))
+    out = capsys.readouterr().out
+    assert "PERDEU O LTE" in out
+    assert "rede inalcancavel" in out
+    assert "956 KB de frames presos" in out
+    assert "Watchdog: vai reiniciar a Elsys" in out
+    assert "O LTE da Elsys VOLTOU (ficou fora 2 min 28 s)" in out
+    assert "Camera CONECTOU" in out
+    assert "Watchdog: FALHOU" in out
+    # ruido escondido
+    assert "Stacktrace" not in out and "0x0055" not in out
+    assert "arp" not in out and "relogio" not in out and "1690794432" not in out
+    # resumo
+    assert "quedas de LTE que voltaram: 1" in out
+    assert "1 tentados, 1 falharam" in out
+    assert "CONECTADA" in out
+
+
+def test_minutos_vira_janela_do_relatorio(tmp_path, capsys):
+    t0 = 1757126096.0
+    _grava(tmp_path / "out", [
+        dict(tipo="evento", t=t0, mono=0, boot="b", cam="102", ev="wan_perdida"),
+        dict(tipo="evento", t=t0 + 3600, mono=3600, boot="b", cam="102", ev="gateway_perdido"),
+    ])
+    cp.main(["--simples", "--minutos", "10", "--dir", str(tmp_path / "out"),
+             "--conf", str(tmp_path / "nao-existe.conf")])
+    out = capsys.readouterr().out
+    assert "SUMIU da rede local" in out and "PERDEU O LTE" not in out

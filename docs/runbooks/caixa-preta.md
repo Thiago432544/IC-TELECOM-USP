@@ -209,6 +209,16 @@ Nenhum botão com cara de reset de fábrica é clicado.
 
 ## Depois de uma queda: o que coletar
 
+**Para ler sem conhecer os eventos** (em frases, com resumo no fim; esconde
+stacktrace do Selenium, relógio da Elsys e linhas repetidas):
+
+```bash
+python3 /opt/caixa-preta/caixa_preta.py --simples --minutos 30            # últimos 30 min
+python3 /opt/caixa-preta/caixa_preta.py --simples --horas 24 --offset ... # com hora real
+```
+
+`--minutos` também vale para `--relatorio` e `--quedas`.
+
 Na Rasp, **antes de reiniciar qualquer coisa**:
 
 ```bash
