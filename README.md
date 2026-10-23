@@ -259,6 +259,11 @@ Duas regras corrigem isso, ambas em `alerts.py`:
   várias vezes por dia e a 106 fora por dias, o lembrete virou o ruído que o
   canal existe para não ter. Quem já estava fora quando o monitor reinicia não
   gera mensagem nova; a volta dela diz quanto tempo a queda durou.
+- **Sem alerta de `degraded`** (desde 23/10/2026). As câmeras passaram a mandar
+  1 frame a cada 15 s de propósito, e a linha de base histórica (~60 frames/min)
+  fazia o alerta disparar sem problema real. Fica desligado por
+  `degraded_alerts = false` (padrão, vale para todas as câmeras); a queda
+  continua avisando. Para religar: `degraded_alerts = true` em `[alerts]`.
 
 O `group_down` — duas ou mais câmeras caindo ao mesmo tempo — **não** é calado
 pelo flapping. Simultaneidade entre rádios independentes é diagnóstico próprio

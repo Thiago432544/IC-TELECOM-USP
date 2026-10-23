@@ -161,7 +161,7 @@ class AlertEngine:
                                      f"frames.", False))
 
             # degradada (nunca junto com down)
-            if (not is_down and st.baseline is not None
+            if (self.cfg.degraded_alerts and not is_down and st.baseline is not None
                     and st.frames_per_min is not None
                     and st.frames_per_min < self.cfg.degraded_ratio * st.baseline):
                 self._deg_since.setdefault(cam, now)

@@ -1,3 +1,5 @@
+from dataclasses import replace
+
 from monitor.alerts import AlertEngine, CamState, Snapshot
 from monitor.config import AlertCfg
 
@@ -5,6 +7,7 @@ CFG = AlertCfg(disk_min_gb=60.0, down_after_s=180, degraded_ratio=0.5,
                degraded_after_s=600, flap_count=5, flap_window_s=900,
                realert_s=1800, link_rsrp_min=-110.0, link_rsrq_min=-15.0,
                link_after_s=300)
+CFG_DEG = replace(CFG, degraded_alerts=True)
 
 def cam(age=10.0, rate=60.0, base=60.0, disc=0, rsrp_cam=None, sinr=None):
     return CamState(frames_per_min=rate, last_frame_age_s=age,
@@ -33,12 +36,12 @@ def test_group_down_replaces_individuals():
     assert "102" in out[0].text and "106" in out[0].text
 
 def test_degraded_needs_persistence_and_baseline():
-    e = AlertEngine(CFG)
+    e = AlertEngine(CFG_DEG)
     low = {"102": cam(age=5, rate=20.0, base=60.0)}
     assert e.evaluate(1000, snap(low)) == []                 # comecou a contar
     assert e.evaluate(1000 + 599, snap(low)) == []           # ainda nao
     assert kinds(e.evaluate(1000 + 601, snap(low))) == [("degraded", "102")]
-    e2 = AlertEngine(CFG)
+    e2 = AlertEngine(CFG_DEG)
     nobase = {"102": cam(age=5, rate=20.0, base=None)}
     assert e2.evaluate(1000, snap(nobase)) == []
     assert e2.evaluate(2000, snap(nobase)) == []
@@ -215,7 +218,7 @@ def test_degraded_insiste_mudo():
     repetia de meia em meia hora vibrando o celular - o mesmo erro que a queda
     sustentada corrigiu em 2543838. O primeiro avisa; o lembrete fica no chat.
     """
-    e = AlertEngine(CFG)
+    e = AlertEngine(CFG_DEG)
     low = {"102": cam(age=5, rate=20.0, base=60.0)}
     e.evaluate(1000, snap(low))
 
@@ -231,7 +234,7 @@ def test_degraded_insiste_mudo():
 def test_novo_episodio_de_degradada_volta_a_notificar():
     """Fim do episodio limpa a supressao: uma degradacao nova logo depois de
     uma que acabou nao pode ser engolida pela janela de 30 min da anterior."""
-    e = AlertEngine(CFG)
+    e = AlertEngine(CFG_DEG)
     low = {"102": cam(age=5, rate=20.0, base=60.0)}
     ok = {"102": cam(age=5, rate=60.0, base=60.0)}
     e.evaluate(1000, snap(low))
@@ -294,3 +297,15 @@ def test_radio_que_melhora_zera_a_contagem():
     e.evaluate(1000, ruim)
     e.evaluate(1100, bom)
     assert e.evaluate(1301, ruim) == []
+
+
+def test_degradada_desligada_por_padrao():
+    """23/10: as cameras passaram a 1 frame a cada 15 s de proposito. Com o
+    alerta desligado (padrao), taxa baixa nao avisa; queda continua avisando."""
+    assert CFG.degraded_alerts is False
+    e = AlertEngine(CFG)
+    low = {"102": cam(age=5, rate=4.0, base=60.0), "106": cam(age=5, rate=4.0, base=60.0)}
+    for t in (1000, 1601, 5000, 9000):
+        assert e.evaluate(t, snap(low)) == []
+    caiu = e.evaluate(9300, snap({"102": cam(age=200, rate=0.0), "106": cam(age=5, rate=4.0)}))
+    assert ("down", "102") in kinds(caiu)

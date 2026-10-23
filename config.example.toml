@@ -32,6 +32,9 @@ disk_min_gb = 60.0
 down_after_s = 180
 degraded_ratio = 0.5
 degraded_after_s = 600
+# Alerta de "degradada" (frames/min abaixo da media): desligado desde 23/10,
+# quando as cameras passaram a 1 frame a cada 15 s. Queda continua avisando.
+degraded_alerts = false
 flap_count = 5
 flap_window_s = 900
 realert_s = 1800

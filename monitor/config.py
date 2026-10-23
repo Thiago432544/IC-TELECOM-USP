@@ -52,6 +52,11 @@ class AlertCfg:
     radio_rsrp_min: float = -100.0
     radio_sinr_min: float = 5.0
     radio_after_s: int = 300
+    # Alerta de "camera degradada" (frames/min abaixo da linha de base).
+    # Desligado desde 23/10/2026: as cameras passaram a mandar 1 frame a cada
+    # 15 s de proposito, e a base historica fazia o alerta disparar sem haver
+    # problema. Queda (sem frames) continua avisando. Ligar: degraded_alerts = true.
+    degraded_alerts: bool = False
 
 @dataclass(frozen=True)
 class RadioCfg:
