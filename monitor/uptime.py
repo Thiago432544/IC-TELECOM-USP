@@ -80,6 +80,18 @@ def outages(store: Store, camera: str, since: float, until: float,
     if start is not None:
         spans.append((start, None))
 
+    # Depois de um buraco de cobertura, a idade da amostra pode apontar para
+    # um frame anterior ao buraco: e' a mesma queda, vista de novo. Sem juntar,
+    # uma camera fora o dia todo virava "2 intervalos" e a mesma janela entrava
+    # duas vezes na conta da disponibilidade (106 e 105: -100.3%, 29/10/2026).
+    juntos: list[tuple[float, Optional[float]]] = []
+    for a, b in spans:
+        if juntos and juntos[-1][1] is not None and a <= juntos[-1][1]:
+            juntos[-1] = (juntos[-1][0], b)
+        else:
+            juntos.append((a, b))
+    spans = juntos
+
     out = []
     for a, b in spans:
         dur = (b if b is not None else until) - a
@@ -101,13 +113,38 @@ def availability(outs: list[Outage], since: float, until: float,
                                       if min(b, until) > max(a, since))
     if conhecido <= 0:
         return None                          # nao sei; 100% e 0% seriam mentira
-    fora = 0.0
-    for o in outs:
-        a = max(o.start, since)
-        b = min(o.end if o.end is not None else until, until)
-        if b > a:
-            fora += b - a
-    return round(100.0 * (1.0 - fora / conhecido), 1)
+    # Tempo fora = uniao das quedas, recortada na janela, MENOS o tempo sem
+    # cobertura (que ja saiu do denominador). Somar queda por queda contava
+    # duas vezes o que se sobrepunha e dava disponibilidade negativa.
+    quedas = _uniao([(max(o.start, since),
+                      min(o.end if o.end is not None else until, until)) for o in outs])
+    buracos = _uniao([(max(a, since), min(b, until)) for a, b in gaps])
+    fora = _medida(quedas) - _medida(_intersecao(quedas, buracos))
+    return round(min(100.0, max(0.0, 100.0 * (1.0 - fora / conhecido))), 1)
+
+
+def _uniao(spans):
+    out = []
+    for a, b in sorted(x for x in spans if x[1] > x[0]):
+        if out and a <= out[-1][1]:
+            out[-1] = (out[-1][0], max(out[-1][1], b))
+        else:
+            out.append((a, b))
+    return out
+
+
+def _medida(spans):
+    return sum(b - a for a, b in spans)
+
+
+def _intersecao(xs, ys):
+    out = []
+    for a, b in xs:
+        for c, d in ys:
+            lo, hi = max(a, c), min(b, d)
+            if hi > lo:
+                out.append((lo, hi))
+    return out
 
 
 def disconnect_times(store: Store, camera: str, since: float,

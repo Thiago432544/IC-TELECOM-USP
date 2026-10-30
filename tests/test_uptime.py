@@ -173,3 +173,29 @@ def test_disconnect_times_recorta_a_janela(tmp_path):
 
     assert disconnect_times(s, "106", t0, t0 + 60) == [t0 + 30]
     s.close()
+
+
+def test_camera_fora_com_monitor_cego_no_meio_e_uma_queda_e_zero_por_cento(tmp_path):
+    """29/10/2026: 105 e 106 fora havia dias; o monitor reiniciou no meio da
+    janela (buraco de cobertura). A idade da amostra depois do buraco aponta
+    para o mesmo frame de dias atras. Saia "2 intervalos, imagem -100.3%"."""
+    s = Store(tmp_path / "m.db")
+    t0 = 1_700_000_000.0
+    ultimo_frame = t0 - 10 * 86400                     # caiu ha 10 dias
+    for i in range(0, 3600, 10):                       # 1a hora: amostras
+        s.add_sample(t0 + i, "106", "last_frame_age_s", t0 + i - ultimo_frame)
+    for i in range(7200, 86400, 10):                   # buraco de 1 h, depois amostras
+        s.add_sample(t0 + i, "106", "last_frame_age_s", t0 + i - ultimo_frame)
+
+    outs = outages(s, "106", t0, t0 + 86400, min_s=300)
+    gaps = coverage_gaps(s, "106", t0, t0 + 86400)
+
+    assert len(outs) == 1
+    assert availability(outs, t0, t0 + 86400, tuple(gaps)) == 0.0
+    s.close()
+
+
+def test_disponibilidade_nunca_negativa_com_quedas_sobrepostas():
+    from monitor.uptime import Outage
+    outs = [Outage(0.0, 100.0, 100.0, None), Outage(50.0, 100.0, 50.0, None)]
+    assert availability(outs, 0.0, 100.0) == 0.0
