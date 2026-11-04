@@ -45,22 +45,36 @@ E nenhum botao com cara de reset de fabrica e' clicado, venha do XPath ou da
 busca por texto: um reset apaga o APN da rede privada e o encaminhamento de
 portas, e a camera so volta com alguem no poste.
 
+Teltonika (RUT200, nov/2026): reinicio pela **API REST**, sem Chrome nem
+Selenium - o Chrome que nao abre foi a causa do F7. Login em /api/login (o
+mesmo que o radio_log.py usa desde 28/08 neste firmware), leitura do modem em
+/api/modems/status, que vai para o log, e o reboot num endpoint de acao. O
+endpoint certo do firmware em campo se confirma na bancada com --seco, que o
+testa por GET sem reiniciar. O fluxo antigo pela pagina continua disponivel
+com `via = pagina`.
+
 Instalar em: /home/pi/Desktop/Porto_de_Santos_2025/PRINCIPAL/watchdog_test.py
 Configuracao (fora do git, ao lado do script): router.conf
     modelo = elsys | teltonika
-    url    = http://192.168.11.254/index.html?status
+    url    = http://192.168.11.254/index.html?status   (Teltonika: http://192.168.11.1)
     usuario = admin
     senha   = ...          # obrigatoria no firmware novo da Elsys e na Teltonika
+    via     = api | pagina # so Teltonika; padrao api
+    api_reboot = /api/system/actions/reboot   # so se a bancada mostrar outro
 
 Na mao:
-    python3 watchdog_test.py --seco   # login e acha o botao, sem clicar (sem queda)
-    python3 watchdog_test.py --test   # reinicia de verdade, com janela visivel
+    python3 watchdog_test.py --seco   # login + confere o reboot, sem reiniciar
+    python3 watchdog_test.py --test   # reinicia de verdade
 """
+import json
 import os
 import shutil
 import tempfile
 import time
 import unicodedata
+import urllib.error
+import urllib.parse
+import urllib.request
 
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
@@ -118,6 +132,13 @@ TELT_SENHA = '//*[@id="password"]'
 TELT_BTN_ENTRAR = "/html/body/div/div/div[1]/form/button"
 TELT_BTN_REBOOT = ("/html/body/div/div/div[2]/div[2]/div/div/div/div/div"
                    "/button")
+# API REST do RutOS (firmware 07.06+; a bancada roda RUT2M_R_00.07.10.2).
+TELT_URL_PADRAO = "http://192.168.11.1"
+TELT_API_REBOOT = "/api/system/actions/reboot"
+# Testados por GET no --seco, nesta ordem, para achar o do firmware em campo.
+TELT_API_REBOOT_CANDIDATOS = (TELT_API_REBOOT, "/api/system/reboot",
+                              "/api/system/device/actions/reboot")
+TELT_API_NAO_EXISTE = 122          # "Endpoint not implemented"
 
 ECOAR = False        # ligado por --test/--seco: log tambem no terminal
 
@@ -323,6 +344,99 @@ def _fluxo_teltonika(driver, cfg, clicar=True):
 FLUXOS = {"elsys": _fluxo_elsys, "teltonika": _fluxo_teltonika}
 
 
+# ------------------------------------------------------- Teltonika por API ---
+
+def _raiz(url):
+    p = urllib.parse.urlsplit(url or TELT_URL_PADRAO)
+    return f"{p.scheme or 'http'}://{p.netloc or p.path.strip('/')}"
+
+
+def _api(metodo, url, corpo=None, token=None, timeout=10):
+    """(status HTTP, JSON). Erro HTTP volta como resposta, nao como excecao:
+    o corpo do erro e' o que diz se o endpoint existe."""
+    cab = {}
+    dados = None
+    if corpo is not None:
+        dados = json.dumps(corpo).encode()
+        cab["Content-Type"] = "application/json"
+    if token:
+        cab["Authorization"] = "Bearer " + token
+    req = urllib.request.Request(url, data=dados, method=metodo, headers=cab)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            texto = r.read().decode("utf-8", "replace")
+            st = r.status
+    except urllib.error.HTTPError as e:
+        texto = e.read().decode("utf-8", "replace")
+        st = e.code
+    try:
+        return st, (json.loads(texto) if texto.strip() else {})
+    except ValueError:
+        return st, {"bruto": texto[:200]}
+
+
+def _codigos(resp):
+    return {e.get("code") for e in (resp.get("errors") or []) if isinstance(e, dict)}
+
+
+def _endpoint_existe(st, resp):
+    return st != 404 and TELT_API_NAO_EXISTE not in _codigos(resp)
+
+
+def _api_login(cfg):
+    if not cfg.get("senha"):
+        raise RuntimeError("a Teltonika pede login e o router.conf nao tem 'senha'")
+    raiz = _raiz(cfg.get("url"))
+    st, r = _api("POST", raiz + "/api/login",
+                 {"username": cfg.get("usuario") or "admin", "password": cfg["senha"]})
+    token = (r.get("data") or {}).get("token") if isinstance(r.get("data"), dict) else None
+    if not token:
+        raise RuntimeError(f"login recusado pela Teltonika (HTTP {st}): "
+                           f"{r.get('errors') or r}")
+    return raiz, token
+
+
+def _api_modem(raiz, token):
+    """Uma linha de log com o estado do modem; nunca derruba o reinicio."""
+    try:
+        st, r = _api("GET", raiz + "/api/modems/status", token=token)
+        d = r.get("data")
+        d = d[0] if isinstance(d, list) and d else (d if isinstance(d, dict) else {})
+        _log(f"teltonika: modem estado={d.get('state')!r} rede={d.get('conntype')!r} "
+             f"operadora={d.get('operator')!r} rsrp={d.get('rsrp')} sinr={d.get('sinr')}")
+    except Exception as e:                                  # noqa: BLE001
+        _log(f"teltonika: estado do modem ilegivel ({type(e).__name__}: {e})")
+
+
+def _fluxo_teltonika_api(cfg, clicar=True):
+    raiz, token = _api_login(cfg)
+    _log("teltonika: login pela API ok")
+    _api_modem(raiz, token)
+    escolhido = cfg.get("api_reboot")
+    if not clicar:
+        candidatos = (escolhido,) if escolhido else TELT_API_REBOOT_CANDIDATOS
+        for caminho in candidatos:
+            st, r = _api("GET", raiz + caminho, token=token)
+            if _endpoint_existe(st, r):
+                _log(f"teltonika: endpoint de reboot {caminho} existe (GET -> HTTP {st}), "
+                     "--seco, nao reiniciado")
+                if caminho != TELT_API_REBOOT and not escolhido:
+                    _log(f"teltonika: ponha 'api_reboot = {caminho}' no router.conf")
+                return
+            _log(f"teltonika: {caminho} nao existe neste firmware (HTTP {st})")
+        raise RuntimeError("nenhum endpoint de reboot conhecido existe neste firmware")
+    caminho = escolhido or TELT_API_REBOOT
+    try:
+        st, r = _api("POST", raiz + caminho, {}, token=token)
+    except (urllib.error.URLError, OSError) as e:
+        # A Teltonika pode cair antes de responder: o reboot ja saiu.
+        _log(f"teltonika: reboot pedido, conexao caiu junto ({type(e).__name__})")
+        return
+    if st >= 400 or r.get("success") is False:
+        raise RuntimeError(f"reboot recusado pela API (HTTP {st}): {r.get('errors') or r}")
+    _log(f"teltonika: reboot pedido pela API ({caminho}, HTTP {st})")
+
+
 def restart_router(teste=False, seco=False):
     """Reinicia o CPE. 0 = reiniciou, -1 = tentou e falhou, -2 = nao tentou.
 
@@ -344,6 +458,20 @@ def restart_router(teste=False, seco=False):
 
     _log("reinicializando roteador")
     cfg = _config()
+    if cfg["modelo"] == "teltonika" and cfg.get("via", "api") != "pagina":
+        try:
+            _fluxo_teltonika_api(cfg, not seco)
+            if seco:
+                _log("--seco ok: login pela API e endpoint de reboot encontrados")
+                return 0
+            _marca_reinicio()
+            _log("roteador reiniciado com sucesso")
+            return 0
+        except Exception as e:                              # noqa: BLE001
+            _log(f"Erro ao reiniciar o roteador: {e}")
+            return -1
+        finally:
+            _solta_trava()
     fluxo = FLUXOS.get(cfg["modelo"], _fluxo_elsys)
     driver = None
     perfil = None

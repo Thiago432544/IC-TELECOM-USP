@@ -314,6 +314,7 @@ def test_router_conf_escolhe_o_teltonika_sem_senha_no_repositorio(tmp_path, monk
     mod = _load(_driver_ok, tmp_path, monkeypatch)
     Path(mod.CONF).write_text(
         "modelo = teltonika\n"
+        "via = pagina\n"
         "url = http://192.168.11.1/\n"
         "usuario = admin\n"
         "senha = segredo\n")
@@ -334,3 +335,164 @@ def test_log_impossivel_nao_derruba_o_reinicio(tmp_path, monkeypatch):
     mod = _load(_driver_ok, tmp_path, monkeypatch)
     monkeypatch.setattr(mod, "LOG", str(tmp_path / "nao" / "existe" / "r.log"))
     assert mod.restart_router() == 0
+
+
+# ------------------------------------------------------- Teltonika por API ---
+
+class _ApiFalsa:
+    """Responde como o RutOS: login com token, modem, e endpoints de acao."""
+
+    def __init__(self, existe=("/api/system/actions/reboot",), senha="segredo",
+                 reboot_cai=False):
+        self.existe, self.senha, self.reboot_cai = set(existe), senha, reboot_cai
+        self.chamadas = []
+
+    def __call__(self, metodo, url, corpo=None, token=None, timeout=10):
+        caminho = url.split("192.168.11.1", 1)[-1]
+        self.chamadas.append((metodo, caminho, corpo, token))
+        if caminho == "/api/login":
+            if corpo["password"] != self.senha:
+                return 401, {"success": False, "errors": [{"code": 120, "error": "login"}]}
+            return 200, {"success": True, "data": {"token": "tok", "expires": 299}}
+        if token != "tok":
+            return 401, {"success": False, "errors": [{"code": 120}]}
+        if caminho == "/api/modems/status":
+            return 200, {"success": True, "data": [{"state": "Connected", "conntype": "LTE",
+                                                    "rsrp": -64, "sinr": 20}]}
+        if caminho in self.existe:
+            if metodo == "POST" and self.reboot_cai:
+                raise mod_urllib_error.URLError("conexao caiu")
+            return (200, {"success": True}) if metodo == "POST" else \
+                (405, {"success": False, "errors": [{"code": 100, "error": "method"}]})
+        return 404, {"success": False, "errors": [{"code": 122, "error": "Endpoint not implemented"}]}
+
+
+import urllib.error as mod_urllib_error
+
+
+def _conf_telt(mod, extra=""):
+    Path(mod.CONF).write_text("modelo = teltonika\nurl = http://192.168.11.1\n"
+                              "usuario = admin\nsenha = segredo\n" + extra)
+
+
+def test_teltonika_reinicia_pela_api_sem_abrir_chrome(tmp_path, monkeypatch):
+    vistos = []
+    mod = _load(_driver_ok, tmp_path, monkeypatch, vistos)
+    api = _ApiFalsa()
+    monkeypatch.setattr(mod, "_api", api)
+    _conf_telt(mod)
+    assert mod.restart_router() == 0
+    assert vistos == []                                    # nenhum Chrome
+    assert ("POST", "/api/system/actions/reboot", {}, "tok") in api.chamadas
+    log = Path(mod.LOG).read_text()
+    assert "estado='Connected'" in log and "rsrp=-64" in log
+    assert Path(mod.ESTADO).exists()                       # conta para a trava de 10 min
+
+
+def test_teltonika_seco_confere_o_endpoint_sem_reiniciar(tmp_path, monkeypatch):
+    mod = _load(_driver_ok, tmp_path, monkeypatch)
+    api = _ApiFalsa()
+    monkeypatch.setattr(mod, "_api", api)
+    _conf_telt(mod)
+    assert mod.restart_router(seco=True) == 0
+    assert not any(m == "POST" and "reboot" in c for m, c, _, _ in api.chamadas)
+    assert not Path(mod.ESTADO).exists()
+    assert "--seco ok" in Path(mod.LOG).read_text()
+
+
+def test_teltonika_seco_acha_outro_endpoint_e_diz_o_que_por_no_conf(tmp_path, monkeypatch):
+    mod = _load(_driver_ok, tmp_path, monkeypatch)
+    monkeypatch.setattr(mod, "_api", _ApiFalsa(existe=("/api/system/reboot",)))
+    _conf_telt(mod)
+    assert mod.restart_router(seco=True) == 0
+    log = Path(mod.LOG).read_text()
+    assert "/api/system/actions/reboot nao existe" in log
+    assert "api_reboot = /api/system/reboot" in log
+
+
+def test_teltonika_sem_endpoint_de_reboot_falha_no_seco(tmp_path, monkeypatch):
+    mod = _load(_driver_ok, tmp_path, monkeypatch)
+    monkeypatch.setattr(mod, "_api", _ApiFalsa(existe=()))
+    _conf_telt(mod)
+    assert mod.restart_router(seco=True) == -1
+    assert "nenhum endpoint de reboot" in Path(mod.LOG).read_text()
+
+
+def test_teltonika_senha_errada_nao_reinicia_e_diz(tmp_path, monkeypatch):
+    mod = _load(_driver_ok, tmp_path, monkeypatch)
+    api = _ApiFalsa(senha="outra")
+    monkeypatch.setattr(mod, "_api", api)
+    _conf_telt(mod)
+    assert mod.restart_router() == -1
+    assert "login recusado" in Path(mod.LOG).read_text()
+    assert not Path(mod.ESTADO).exists()
+
+
+def test_teltonika_que_cai_no_pedido_conta_como_reinicio(tmp_path, monkeypatch):
+    mod = _load(_driver_ok, tmp_path, monkeypatch)
+    monkeypatch.setattr(mod, "_api", _ApiFalsa(reboot_cai=True))
+    _conf_telt(mod)
+    assert mod.restart_router() == 0
+    assert "conexao caiu junto" in Path(mod.LOG).read_text()
+
+
+def test_teltonika_respeita_a_trava_de_10_min(tmp_path, monkeypatch):
+    mod = _load(_driver_ok, tmp_path, monkeypatch)
+    api = _ApiFalsa()
+    monkeypatch.setattr(mod, "_api", api)
+    _conf_telt(mod)
+    assert mod.restart_router() == 0
+    n = len(api.chamadas)
+    assert mod.restart_router() == -2
+    assert len(api.chamadas) == n
+
+
+def test_api_real_sobre_http_le_erro_como_resposta(tmp_path, monkeypatch):
+    """_api de verdade, contra um servidor HTTP local: o 404 do endpoint que
+    nao existe tem que voltar como resposta (codigo 122), nao como excecao."""
+    import http.server
+    import json as _json
+    import threading
+
+    class H(http.server.BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def _resp(self, st, corpo):
+            b = _json.dumps(corpo).encode()
+            self.send_response(st)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(b)))
+            self.end_headers()
+            self.wfile.write(b)
+
+        def do_POST(self):
+            n = int(self.headers.get("Content-Length") or 0)
+            corpo = _json.loads(self.rfile.read(n) or b"{}")
+            if self.path == "/api/login" and corpo.get("password") == "segredo":
+                return self._resp(200, {"success": True, "data": {"token": "tok"}})
+            if self.path == "/api/system/actions/reboot" and \
+                    self.headers.get("Authorization") == "Bearer tok":
+                return self._resp(200, {"success": True})
+            return self._resp(401, {"success": False, "errors": [{"code": 120}]})
+
+        def do_GET(self):
+            if self.path == "/api/modems/status":
+                return self._resp(200, {"success": True, "data": [{"state": "Connected"}]})
+            if self.path == "/api/system/actions/reboot":
+                return self._resp(405, {"success": False, "errors": [{"code": 100}]})
+            return self._resp(404, {"success": False, "errors": [{"code": 122}]})
+
+    srv = http.server.HTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        mod = _load(_driver_ok, tmp_path, monkeypatch)
+        Path(mod.CONF).write_text(f"modelo = teltonika\nurl = http://127.0.0.1:{srv.server_port}\n"
+                                  "usuario = admin\nsenha = segredo\n")
+        st, r = mod._api("GET", f"http://127.0.0.1:{srv.server_port}/nao/existe")
+        assert st == 404 and 122 in mod._codigos(r)
+        assert mod.restart_router(seco=True) == 0
+        assert mod.restart_router() == 0
+        assert "reboot pedido pela API" in Path(mod.LOG).read_text()
+    finally:
+        srv.shutdown()
