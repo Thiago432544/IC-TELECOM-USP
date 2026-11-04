@@ -60,6 +60,7 @@ Configuracao (fora do git, ao lado do script): router.conf
     usuario = admin
     senha   = ...          # obrigatoria no firmware novo da Elsys e na Teltonika
     via     = api | pagina # so Teltonika; padrao api
+    alvo_lte = 192.168.10.2  # do outro lado do radio; respondeu = nao reinicia
     api_reboot = /api/system/actions/reboot   # so se a bancada mostrar outro
 
 Na mao:
@@ -69,6 +70,7 @@ Na mao:
 import json
 import os
 import shutil
+import subprocess
 import tempfile
 import time
 import unicodedata
@@ -87,6 +89,11 @@ LOG = BASE + "/router.log"
 TRAVA = BASE + "/router.lock"
 ESTADO = BASE + "/router.ultimo"
 CONF = BASE + "/router.conf"
+# Quando o watchdog viu o modem da Teltonika desconectado pela primeira vez.
+LTE_FORA = BASE + "/router.lte_fora"
+# Modem desconectado ha menos que isto: a reconexao do proprio RutOS e o Ping
+# Reboot da Teltonika (primeira camada) ainda tem a vez.
+CARENCIA_LTE_S = 1200
 
 CHROMIUM = "/usr/bin/chromium"
 CHROMEDRIVER = "/usr/bin/chromedriver"
@@ -346,6 +353,10 @@ FLUXOS = {"elsys": _fluxo_elsys, "teltonika": _fluxo_teltonika}
 
 # ------------------------------------------------------- Teltonika por API ---
 
+class _Pulado(Exception):
+    """Nao reiniciar agora, de proposito (nao e' falha)."""
+
+
 def _raiz(url):
     p = urllib.parse.urlsplit(url or TELT_URL_PADRAO)
     return f"{p.scheme or 'http'}://{p.netloc or p.path.strip('/')}"
@@ -397,22 +408,69 @@ def _api_login(cfg):
 
 
 def _api_modem(raiz, token):
-    """Uma linha de log com o estado do modem; nunca derruba o reinicio."""
+    """Uma linha de log com o estado do modem; devolve o estado ('' se
+    ilegivel). Nunca derruba o reinicio."""
     try:
         st, r = _api("GET", raiz + "/api/modems/status", token=token)
         d = r.get("data")
         d = d[0] if isinstance(d, list) and d else (d if isinstance(d, dict) else {})
         _log(f"teltonika: modem estado={d.get('state')!r} rede={d.get('conntype')!r} "
              f"operadora={d.get('operator')!r} rsrp={d.get('rsrp')} sinr={d.get('sinr')}")
+        return str(d.get("state") or "")
     except Exception as e:                                  # noqa: BLE001
         _log(f"teltonika: estado do modem ilegivel ({type(e).__name__}: {e})")
+        return ""
+
+
+def _alvo_responde(alvo):
+    """Ping no alvo do outro lado do radio. So ICMP, de proposito: em 24/08 a
+    Elsys travada respondia 'recusada' a qualquer TCP, como se fosse o outro
+    lado; ping ela nao responde nem por si mesma."""
+    try:
+        r = subprocess.run(["ping", "-c", "2", "-W", "2", alvo],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
+        return r.returncode == 0
+    except Exception:                                       # noqa: BLE001
+        return False
+
+
+def _carencia_lte(conectado, agora=None):
+    """True se o modem esta desconectado ha menos de CARENCIA_LTE_S (a vez
+    ainda e' da Teltonika). Registra quando viu a desconexao pela primeira vez."""
+    agora = agora or time.time()
+    if conectado:
+        try:
+            os.unlink(LTE_FORA)
+        except OSError:
+            pass
+        return False
+    try:
+        with open(LTE_FORA) as f:
+            desde = float(f.read().strip())
+    except (OSError, ValueError):
+        desde = agora
+        try:
+            with open(LTE_FORA, "w") as f:
+                f.write(str(agora))
+        except OSError:
+            pass
+    fora = agora - desde
+    if fora < CARENCIA_LTE_S:
+        _log(f"pulando: modem desconectado ha {fora / 60:.0f} min; a Teltonika "
+             f"(reconexao e Ping Reboot) tem ate {CARENCIA_LTE_S // 60} min")
+        return True
+    _log(f"modem desconectado ha {fora / 60:.0f} min: a primeira camada nao resolveu")
+    return False
 
 
 def _fluxo_teltonika_api(cfg, clicar=True):
     raiz, token = _api_login(cfg)
     _log("teltonika: login pela API ok")
-    _api_modem(raiz, token)
+    estado = _api_modem(raiz, token)
     escolhido = cfg.get("api_reboot")
+    if clicar and not cfg.get("_manual") and estado:
+        if _carencia_lte(estado.lower() == "connected"):
+            raise _Pulado()
     if not clicar:
         # Controle: como o firmware responde a um endpoint que certamente nao
         # existe. Em 03/11 o reboot respondeu GET com HTTP 501, que tanto pode
@@ -465,8 +523,19 @@ def restart_router(teste=False, seco=False):
         _log("pulando: ja existe um reinicio em andamento")
         return -2
 
-    _log("reinicializando roteador")
     cfg = _config()
+    cfg["_manual"] = teste or seco
+    # Segunda camada: so reinicia se o radio da camera estiver mesmo ruim. O
+    # alvo fica do outro lado do radio e nao depende do SPA: se responde, o
+    # problema esta depois da eNodeB (SPA, servidor) e reiniciar o CPE local
+    # nao adianta - foram 38 reinicios inuteis na 102 em 29-30/10/2026.
+    alvo = cfg.get("alvo_lte", "").strip()
+    if alvo and not (teste or seco) and _alvo_responde(alvo):
+        _log(f"pulando: {alvo} responde - o radio esta bom, o problema e' depois "
+             "da eNodeB (SPA ou servidor); reiniciar o CPE nao adianta")
+        _solta_trava()
+        return -2
+    _log("reinicializando roteador")
     if cfg["modelo"] == "teltonika" and cfg.get("via", "api") != "pagina":
         try:
             _fluxo_teltonika_api(cfg, not seco)
@@ -476,6 +545,8 @@ def restart_router(teste=False, seco=False):
             _marca_reinicio()
             _log("roteador reiniciado com sucesso")
             return 0
+        except _Pulado:
+            return -2
         except Exception as e:                              # noqa: BLE001
             _log(f"Erro ao reiniciar o roteador: {e}")
             return -1

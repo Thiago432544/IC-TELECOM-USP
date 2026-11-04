@@ -59,6 +59,9 @@ def _load(chrome_factory, tmp_path, monkeypatch, vistos=None):
     monkeypatch.setattr(mod, "TRAVA", str(tmp_path / "router.lock"))
     monkeypatch.setattr(mod, "ESTADO", str(tmp_path / "router.ultimo"))
     monkeypatch.setattr(mod, "CONF", str(tmp_path / "router.conf"))
+    monkeypatch.setattr(mod, "LTE_FORA", str(tmp_path / "router.lte_fora"))
+    # ping de verdade nunca: sem alvo_lte no conf ele nem e' chamado
+    monkeypatch.setattr(mod, "_alvo_responde", lambda alvo: False)
     monkeypatch.setattr(mod, "ERRO_HTML", str(tmp_path / "router_erro.html"))
     monkeypatch.setattr(mod, "ERRO_PNG", str(tmp_path / "router_erro.png"))
     monkeypatch.setattr(mod.time, "sleep", lambda s: None)
@@ -515,3 +518,105 @@ def test_teltonika_seco_compara_com_um_endpoint_inexistente(tmp_path, monkeypatc
     _conf_telt(mod)
     assert mod.restart_router(seco=True) == -1
     assert "igual ao controle" in Path(mod.LOG).read_text()
+
+
+# ------------------------------------------------- segunda camada (04/11) ---
+
+def test_alvo_do_outro_lado_respondendo_nao_reinicia(tmp_path, monkeypatch):
+    """29-30/10: o SPA travado e a 102 com o radio bom levou 38 reinicios.
+    Com o alvo do outro lado do radio respondendo, reiniciar nao adianta."""
+    vistos = []
+    mod = _load(_driver_ok, tmp_path, monkeypatch, vistos)
+    pings = []
+    monkeypatch.setattr(mod, "_alvo_responde", lambda a: pings.append(a) or True)
+    Path(mod.CONF).write_text("alvo_lte = 192.168.10.2\n")
+    assert mod.restart_router() == -2
+    assert pings == ["192.168.10.2"] and vistos == []
+    assert not Path(mod.ESTADO).exists()
+    assert not Path(mod.TRAVA).exists()
+    assert "o radio esta bom" in Path(mod.LOG).read_text()
+
+
+def test_alvo_mudo_segue_e_reinicia(tmp_path, monkeypatch):
+    vistos = []
+    mod = _load(_driver_ok, tmp_path, monkeypatch, vistos)
+    Path(mod.CONF).write_text("alvo_lte = 192.168.10.2\n")
+    assert mod.restart_router() == 0
+    assert len(vistos) == 1
+
+
+def test_teste_manual_ignora_o_alvo(tmp_path, monkeypatch):
+    vistos = []
+    mod = _load(_driver_ok, tmp_path, monkeypatch, vistos)
+    monkeypatch.setattr(mod, "_alvo_responde", lambda a: True)
+    Path(mod.CONF).write_text("alvo_lte = 192.168.10.2\n")
+    assert mod.restart_router(teste=True) == 0
+    assert len(vistos) == 1
+
+
+def test_sem_alvo_no_conf_nao_pinga_ninguem(tmp_path, monkeypatch):
+    mod = _load(_driver_ok, tmp_path, monkeypatch)
+    pings = []
+    monkeypatch.setattr(mod, "_alvo_responde", lambda a: pings.append(a) or True)
+    assert mod.restart_router() == 0
+    assert pings == []
+
+
+class _ApiModem(_ApiFalsa):
+    def __init__(self, estado, **k):
+        super().__init__(**k)
+        self.estado = estado
+
+    def __call__(self, metodo, url, corpo=None, token=None, timeout=10):
+        if url.endswith("/api/modems/status") and token == "tok":
+            self.chamadas.append((metodo, "/api/modems/status", corpo, token))
+            return 200, {"success": True, "data": [{"state": self.estado}]}
+        return super().__call__(metodo, url, corpo, token, timeout)
+
+
+def _reboots(api):
+    return [c for c in api.chamadas if c[0] == "POST" and "reboot" in c[1]]
+
+
+def test_teltonika_modem_fora_ha_pouco_espera_a_primeira_camada(tmp_path, monkeypatch):
+    mod = _load(_driver_ok, tmp_path, monkeypatch)
+    api = _ApiModem("Disconnected")
+    monkeypatch.setattr(mod, "_api", api)
+    _conf_telt(mod)
+    assert mod.restart_router() == -2
+    assert _reboots(api) == []
+    assert Path(mod.LTE_FORA).exists()
+    assert "tem ate 20 min" in Path(mod.LOG).read_text()
+
+
+def test_teltonika_modem_fora_ha_mais_de_20_min_reinicia(tmp_path, monkeypatch):
+    mod = _load(_driver_ok, tmp_path, monkeypatch)
+    api = _ApiModem("Disconnected")
+    monkeypatch.setattr(mod, "_api", api)
+    _conf_telt(mod)
+    Path(mod.LTE_FORA).write_text(str(__import__("time").time() - 1300))
+    assert mod.restart_router() == 0
+    assert len(_reboots(api)) == 1
+    assert "a primeira camada nao resolveu" in Path(mod.LOG).read_text()
+
+
+def test_teltonika_conectada_mas_alvo_mudo_reinicia_e_zera_a_carencia(tmp_path, monkeypatch):
+    """O caso de 24/08: o modem diz conectado e nada passa. E' para isto que a
+    segunda camada existe."""
+    mod = _load(_driver_ok, tmp_path, monkeypatch)
+    api = _ApiModem("Connected")
+    monkeypatch.setattr(mod, "_api", api)
+    _conf_telt(mod, "alvo_lte = 192.168.10.2\n")
+    Path(mod.LTE_FORA).write_text("123")
+    assert mod.restart_router() == 0
+    assert len(_reboots(api)) == 1
+    assert not Path(mod.LTE_FORA).exists()
+
+
+def test_teltonika_teste_manual_reinicia_mesmo_com_modem_fora(tmp_path, monkeypatch):
+    mod = _load(_driver_ok, tmp_path, monkeypatch)
+    api = _ApiModem("Disconnected")
+    monkeypatch.setattr(mod, "_api", api)
+    _conf_telt(mod)
+    assert mod.restart_router(teste=True) == 0
+    assert len(_reboots(api)) == 1
