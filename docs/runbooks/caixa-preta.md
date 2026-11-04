@@ -258,6 +258,64 @@ A amostra é a cada 30 s, então a calibração tem ±30 s. A defasagem só muda
 quando a Pi perde energia (o `fake-hwclock` volta à última hora salva): depois
 de um `boot_novo`, calibre de novo.
 
+## Teltonika e alvo do LTE (04/11/2026, versão `2026-11-04`)
+
+**Qual CPE.** A caixa-preta descobre sozinha: `cpe` em `/etc/caixa-preta.conf`;
+se não houver, o `modelo` do `router.conf` do watchdog; se não houver, o
+gateway `192.168.11.1` indica Teltonika. As frases do `--simples` passam a
+dizer "Teltonika" no lugar de "Elsys".
+
+**Rádio pela API.** Na Teltonika, a leitura do rádio não abre página: faz login
+em `/api/login` (usuário e senha do mesmo `router.conf`) e lê
+`/api/modems/status` — RSRP, RSRQ, SINR, banda e o estado do modem. O token é
+reaproveitado por ~4,5 min (uma sessão a cada ~5 leituras de 60 s). Continua
+**desligada por padrão** até passar pelo teste longo na bancada. Eventos novos:
+
+- `modem_desconectou` / `modem_conectou`: o próprio modem diz que saiu ou
+  voltou ao LTE (vale para a Elsys também, pelo campo "Conexão").
+
+**Alvo do LTE.** Com `alvo_lte` (por padrão o mesmo do `router.conf`,
+`192.168.10.2`), cada ciclo de 30 s pinga o outro lado do rádio. `-` desliga.
+Eventos `alvo_perdido` / `alvo_voltou`; o `estado_inicial` diz se o alvo
+responde. `--quedas` passa a olhar `wan_perdida` **e** `alvo_perdido` (juntos
+em 2 min contam como uma queda), o que pega a queda em que o modem diz
+"Conectado" sem passar tráfego.
+
+**Instalador.** O gateway agora vem só da rota do cabo (`eth0`): na bancada a
+Pi também tem Wi-Fi, e a rota padrão dela apontaria para o roteador do Wi-Fi.
+Chaves postas à mão (`radio_s`, `alvo_lte`, `cpe`) sobrevivem a uma
+reinstalação.
+
+### Bancada da 106 (Teltonika da antiga 105)
+
+```bash
+# 1. baixar e instalar
+mkdir -p ~/cp-2026-11-04 && cd ~/cp-2026-11-04
+R=https://raw.githubusercontent.com/Thiago432544/ic-telecom-usp/main/deploy/rasp/caixa-preta
+for f in caixa_preta.py instalar_caixa_preta.sh caixa-preta.service journald-persistente.conf; do
+  curl -fsSLO "$R/$f"; done
+sudo bash instalar_caixa_preta.sh 106        # deve mostrar "gateway 192.168.11.1"
+
+# 2. uma leitura pela API (testa o login com o router.conf)
+sudo python3 /opt/caixa-preta/caixa_preta.py --radio
+
+# 3. ligar a leitura a cada 60 s para o teste longo
+echo "radio_s = 60" | sudo tee -a /etc/caixa-preta.conf
+sudo systemctl restart caixa-preta
+
+# 4. acompanhar
+python3 /opt/caixa-preta/caixa_preta.py --simples --minutos 30
+tail -3 /var/log/caixa-preta/radio.jsonl
+```
+
+Critério para ligar em campo: dias de leitura a 60 s sem `radio_sem_leitura`
+persistente, `--seco` do watchdog passando todo dia, e a CPU da Teltonika
+(Status → Overview) sem piorar em relação a antes da leitura.
+
+Na USP não há eNodeB da NLT: o modem deve aparecer desconectado, o alvo
+`192.168.10.2` não responde e `wan_perdida` aparece desde o início. Isso é o
+esperado na bancada; o que se testa é a leitura e os eventos.
+
 ## Como ler os eventos
 
 | O relatório mostra | Leitura provável |
@@ -279,6 +337,10 @@ de um `boot_novo`, calibre de novo.
 | `radio_sem_leitura` | a caixa-preta não consegue ler a página da Elsys: `router.conf` sem senha, senha errada, ou a Elsys fora da LAN |
 | `wan_perdida` com o gateway respondendo, e `caminho_ruim` com `erro:101` | **a Elsys perdeu o LTE**: ela responde "rede inalcançável" para o PC (102, 14/10 22:28) |
 | `router_log` "reinicializando roteador", depois `gateway_perdido` e `Link is Down` no kernel | o watchdog do cliente reiniciou a Elsys de verdade (só funciona com o Chrome abrindo: cliente num terminal do VNC ou o `watchdog_test.py` do repositório) |
+| `alvo_perdido` com `wan` ok e o modem "Conectado" | o modem diz que está no LTE mas não passa tráfego: o CPE travado (o caso do watchdog de segunda camada) |
+| alvo responde, conexão com o servidor não abre | o rádio está bom: servidor, PC do SPA ou a Elsys do SPA (29–30/10, 03/11) |
+| `modem_desconectou` seguido de `modem_conectou` em poucos minutos | a própria Teltonika se recuperou (primeira camada) |
+| `router_log` "pulando: ... responde" | o watchdog viu o alvo respondendo e não reiniciou o CPE, de propósito |
 | dois "reinicializando" seguidos, com o LTE voltando entre eles | o watchdog original reiniciando a cada tentativa: o segundo reinício derruba o LTE que acabou de voltar |
 
 ## Volume

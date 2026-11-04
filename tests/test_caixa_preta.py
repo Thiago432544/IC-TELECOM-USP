@@ -684,3 +684,219 @@ def test_minutos_vira_janela_do_relatorio(tmp_path, capsys):
              "--conf", str(tmp_path / "nao-existe.conf")])
     out = capsys.readouterr().out
     assert "SUMIU da rede local" in out and "PERDEU O LTE" not in out
+
+
+# ------------------------------------------------------------- Teltonika ---
+
+# O item de /api/modems/status como o RutOS 07.10 manda (campos de texto ou
+# numero, conforme o firmware); IMEI e ICCID nao podem ir para o registro.
+MODEM_TELT = {"id": "2-1", "state": "Connected", "conntype": "LTE", "operator": "NLT",
+              "rsrp": "-71", "rsrq": -9, "sinr": "12.5", "signal": -48, "band": "LTE B28",
+              "imei": "860000000000000", "iccid": "8955000000000000000"}
+
+
+def test_modem_da_teltonika_no_formato_da_elsys():
+    r = cp.parse_modem_teltonika(MODEM_TELT)
+    assert r["con"] == "Conectado" and r["rsrp"] == -71.0 and r["rsrq"] == -9.0
+    assert r["sinr"] == 12.5 and r["rssi"] == -48.0 and r["banda"] == "LTE B28"
+    assert "imei" not in r and "iccid" not in r and "860000" not in json.dumps(r)
+    fora = cp.parse_modem_teltonika({"state": "Disconnected", "rsrp": ""})
+    assert fora["con"] == "Desconectado (Disconnected)" and fora["rsrp"] is None
+    assert cp._sumiu(fora) and not cp._sumiu(r)
+
+
+def _teltonika_falsa(senha="segredo", estado="Connected"):
+    """Servidor HTTP local com a API do RutOS: /api/login e /api/modems/status."""
+    import http.server
+    import threading
+    conta = {"logins": 0, "status": 0, "tokens": []}
+    modem = dict(MODEM_TELT, state=estado)
+
+    class H(http.server.BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def _json(self, codigo, obj):
+            corpo = json.dumps(obj).encode()
+            self.send_response(codigo)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(corpo)))
+            self.end_headers()
+            self.wfile.write(corpo)
+
+        def do_POST(self):
+            n = int(self.headers.get("Content-Length") or 0)
+            d = json.loads(self.rfile.read(n) or b"{}")
+            if self.path != "/api/login":
+                return self._json(404, {"success": False, "errors": [{"code": 122}]})
+            if d.get("username") == "admin" and d.get("password") == senha:
+                conta["logins"] += 1
+                tok = f"tok{conta['logins']}"
+                conta["tokens"].append(tok)
+                return self._json(200, {"success": True, "data": {"token": tok, "expires": 299}})
+            self._json(401, {"success": False, "errors": [{"code": 121}]})
+
+        def do_GET(self):
+            if self.path != "/api/modems/status":
+                return self._json(404, {"success": False, "errors": [{"code": 122}]})
+            tok = (self.headers.get("Authorization") or "").replace("Bearer ", "")
+            if not conta["tokens"] or tok != conta["tokens"][-1]:
+                return self._json(401, {"success": False, "errors": [{"code": 120}]})
+            conta["status"] += 1
+            self._json(200, {"success": True, "data": [modem]})
+
+    srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv, f"http://127.0.0.1:{srv.server_address[1]}", conta, modem
+
+
+def test_leitor_teltonika_reusa_o_token_e_refaz_quando_vence(tmp_path):
+    srv, raiz, conta, _ = _teltonika_falsa()
+    try:
+        conf = tmp_path / "router.conf"
+        conf.write_text("modelo = teltonika\nusuario = admin\nsenha = segredo\n")
+        m = {"t": 0.0}
+        leitor = cp.LeitorTeltonika(raiz, str(conf), mono=lambda: m["t"])
+        for _ in range(4):                                   # 4 leituras a cada 60 s
+            assert leitor.le()["rsrp"] == -71.0
+            m["t"] += 60
+        assert conta["logins"] == 1 and conta["status"] == 4
+        m["t"] = 400                                         # passou dos 270 s
+        leitor.le()
+        assert conta["logins"] == 2
+        conta["tokens"].append("outro")                      # token revogado (reboot)
+        assert leitor.le()["con"] == "Conectado"             # 401 -> login de novo
+        assert conta["logins"] == 3
+    finally:
+        srv.shutdown()
+
+
+def test_leitor_teltonika_sem_senha_ou_senha_errada_e_login_recusado(tmp_path):
+    srv, raiz, conta, _ = _teltonika_falsa()
+    try:
+        for conteudo, esperado in (("", "nao tem 'senha'"), ("senha = errada\n", "HTTP 401")):
+            conf = tmp_path / "router.conf"
+            conf.write_text(conteudo)
+            try:
+                cp.LeitorTeltonika(raiz, str(conf)).le()
+            except cp.LoginRecusado as e:
+                assert esperado in str(e)
+            else:
+                raise AssertionError(conteudo)
+        assert conta["status"] == 0
+    finally:
+        srv.shutdown()
+
+
+def test_cpe_e_alvo_vem_do_router_conf_do_watchdog(tmp_path):
+    base = tmp_path / "base"
+    base.mkdir()
+    (base / "router.conf").write_text(
+        "modelo = teltonika\nurl = http://192.168.11.1\nsenha = x\nalvo_lte = 192.168.10.2\n")
+    conf = tmp_path / "cp.conf"
+    conf.write_text(f"camera = 106\ngateway = 192.168.11.1\nbase = {base}\n")
+    cfg = cp.monta_cfg(cp.argparse.Namespace(conf=str(conf), camera=""))
+    assert cfg["cpe"] == "teltonika" and cfg["alvo_lte"] == "192.168.10.2"
+    assert isinstance(cp.cria_leitor(cfg), cp.LeitorTeltonika)
+    assert cp.cria_leitor(dict(cfg, cpe="elsys")).url.endswith("/status.html")
+    conf.write_text(f"camera = 106\nbase = {base}\nalvo_lte = -\ncpe = Elsys\n")
+    cfg = cp.monta_cfg(cp.argparse.Namespace(conf=str(conf), camera=""))
+    assert cfg["cpe"] == "elsys" and cfg["alvo_lte"] == ""
+    # sem router.conf: o gateway .1 ja' diz que e' Teltonika
+    conf.write_text(f"camera = 106\ngateway = 192.168.11.1\nbase = {tmp_path}\n")
+    cfg = cp.monta_cfg(cp.argparse.Namespace(conf=str(conf), camera=""))
+    assert cfg["cpe"] == "teltonika" and cfg["alvo_lte"] == ""
+
+
+def test_alvo_do_outro_lado_do_lte_vira_evento(tmp_path, monkeypatch):
+    proc, sysfs = _proc(tmp_path)
+    ag, cfg, _, relogio = _agente(tmp_path, monkeypatch, proc, sysfs, alvo_lte="192.168.10.2",
+                                  cpe="teltonika")
+    alvo = {"ms": 40.0}
+    monkeypatch.setattr(cp, "ping_ms", lambda ip, timeout=2.0: alvo["ms"]
+                        if ip == "192.168.10.2" else 1.0)
+    ag.inicio()
+    for ms in (40.0, None, None, 41.0):
+        alvo["ms"] = ms
+        relogio["m"] += 30
+        a = ag.ciclo()
+        assert a["alvo_ms"] == ms
+    evs = _eventos(cfg)
+    assert evs[0]["cfg"]["cpe"] == "teltonika" and evs[0]["cfg"]["alvo_lte"] == "192.168.10.2"
+    ini = [e for e in evs if e["ev"] == "estado_inicial"][0]
+    assert ini["alvo"] == "192.168.10.2" and ini["alvo_ms"] == 40.0
+    nomes = [e["ev"] for e in evs if e["ev"].startswith("alvo")]
+    assert nomes == ["alvo_perdido", "alvo_voltou"]
+
+
+def test_sem_alvo_nao_pinga_nada_a_mais(tmp_path, monkeypatch):
+    proc, sysfs = _proc(tmp_path)
+    ag, cfg, _, _ = _agente(tmp_path, monkeypatch, proc, sysfs)
+    ag.inicio()
+    assert "alvo_ms" not in ag.ciclo()
+
+
+def test_modem_que_sai_e_volta_ao_lte_vira_evento(tmp_path, monkeypatch):
+    proc, sysfs = _proc(tmp_path)
+    ag, cfg, _, relogio = _agente(tmp_path, monkeypatch, proc, sysfs, radio_s=60)
+    leitor = _LeitorFalso([-64.0, -64.0, None, None, -65.0])
+    for _ in range(5):
+        relogio["t"] += 60
+        ag.radio(leitor)
+    nomes = [e["ev"] for e in _eventos(cfg)]
+    assert nomes[0] == "radio_inicial"
+    assert nomes.count("modem_desconectou") == 1 and nomes.count("modem_conectou") == 1
+    assert nomes.index("modem_desconectou") < nomes.index("modem_conectou")
+
+
+def test_relatorio_simples_da_teltonika(tmp_path, capsys):
+    t0 = 1757126096.0
+    ev = lambda dt, nome, **d: dict(tipo="evento", t=t0 + dt, mono=dt, boot="b", cam="106",
+                                    ev=nome, **d)
+    _grava(tmp_path / "out", [
+        ev(0, "inicio", versao="x", cfg={"cpe": "teltonika", "alvo_lte": "192.168.10.2"}),
+        ev(0, "estado_inicial", gw_ms=0.5, conn=[], cliente=[], alvo="192.168.10.2",
+           alvo_ms=40.0),
+        ev(30, "alvo_perdido", alvo="192.168.10.2"),
+        ev(60, "modem_desconectou", con="Desconectado (Disconnected)", rsrp=None),
+        ev(90, "router_log", linha="2026-11-04 10:00:00 | pulando: modem desconectado ha 1 min;"
+                                   " a Teltonika ainda tem a vez (Ping Reboot)"),
+        ev(95, "router_log", linha="2026-11-04 10:00:05 | pulando: 192.168.10.2 responde - o "
+                                   "radio esta bom, o problema e' depois dele"),
+        ev(1300, "router_log", linha="reinicializando roteador"),
+        ev(1301, "router_log", linha="teltonika: reboot pedido pela API "
+                                     "(/api/system/actions/reboot, HTTP 200)"),
+        ev(1400, "alvo_voltou", alvo="192.168.10.2"),
+    ])
+    cp.relatorio_simples(str(tmp_path / "out"))
+    out = capsys.readouterr().out
+    assert "Elsys" not in out
+    assert "outro lado do LTE (192.168.10.2) responde" in out
+    assert "OUTRO LADO DO LTE (192.168.10.2) PAROU" in out
+    assert "modem da Teltonika diz que SAIU do LTE" in out
+    assert "fora ha 1 min" in out and "propria Teltonika" in out
+    assert "Watchdog: vai reiniciar a Teltonika" in out
+    assert "pediu o reinicio da Teltonika pela API" in out
+    assert "voltou a responder (ficou fora 22 min 50 s)" in out
+    assert "parou de responder e voltou 1 vez(es)" in out
+    assert "reinicios da Teltonika pelo watchdog: 1 tentados" in out
+
+
+def test_quedas_pega_o_alvo_e_junta_com_a_wan(tmp_path, capsys):
+    pasta = tmp_path / "out"
+    t0 = 1.79e9
+    reg = cp.Registro(str(pasta))
+    base = dict(tipo="evento", mono=0, boot="b", cam="106")
+    reg.grava(dict(base, t=t0 - 1000, ev="inicio", cfg={"cpe": "teltonika"}))
+    reg.grava(dict(base, t=t0, ev="alvo_perdido", alvo="192.168.10.2"))
+    reg.grava(dict(base, t=t0 + 30, ev="wan_perdida"))       # a mesma queda
+    reg.grava(dict(base, t=t0 + 5000, ev="alvo_perdido"))    # outra, so' no alvo
+    rr = cp.Registro(str(pasta), nome="radio.jsonl", prefixo="radio-")
+    for dt in range(-90, 31, 10):
+        for tq in (t0, t0 + 5000):
+            rr.grava({"t": tq + dt, "rsrp": -70.0, "rsrq": -9.0, "sinr": 12.0,
+                      "con": "Conectado"})
+    cp.relatorio_quedas(str(pasta))
+    out = capsys.readouterr().out
+    assert out.count("== queda") == 2 and "wan_perdida ==" not in out
+    assert "sinr 12.0" in out and "aponta para a Teltonika" in out

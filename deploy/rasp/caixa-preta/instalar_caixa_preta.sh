@@ -17,8 +17,10 @@ for f in caixa_preta.py caixa-preta.service journald-persistente.conf; do
     [ -f "$HERE/$f" ] || { echo "ERRO: falta $f ao lado do instalador"; exit 1; }
 done
 
-# O gateway e' a LAN do proprio CPE: .254 na Elsys, .1 no Teltonika.
-GW="$(ip route show default 2>/dev/null | awk '/^default/ {print $3; exit}')"
+# O gateway e' a LAN do proprio CPE: .254 na Elsys, .1 no Teltonika. So' a
+# rota do cabo (eth0): na bancada a Pi tambem tem Wi-Fi, e a rota padrao dela
+# apontaria para o roteador do Wi-Fi.
+GW="$(ip route show default dev eth0 2>/dev/null | awk '/^default/ {print $3; exit}')"
 [ -n "$GW" ] || GW=192.168.11.254
 echo "== camera $CAM, gateway $GW =="
 
@@ -32,14 +34,20 @@ journalctl --list-boots 2>/dev/null | tail -3 || true
 echo "== 2. agente =="
 mkdir -p /opt/caixa-preta /var/log/caixa-preta /var/lib/caixa-preta
 install -m 0755 "$HERE/caixa_preta.py" /opt/caixa-preta/caixa_preta.py
+EXTRA=""
 if [ -f /etc/caixa-preta.conf ]; then
     cp /etc/caixa-preta.conf "/etc/caixa-preta.conf.$(date +%s).bak"
+    # o que foi posto a mao (radio_s, alvo_lte, cpe...) continua
+    EXTRA="$(grep -vE '^[[:space:]]*(camera|gateway)[[:space:]]*=|^# Gerado' /etc/caixa-preta.conf || true)"
 fi
 cat > /etc/caixa-preta.conf <<EOF
 # Gerado por instalar_caixa_preta.sh. Chaves validas: ver PADRAO em caixa_preta.py
 camera = $CAM
 gateway = $GW
 EOF
+[ -z "$EXTRA" ] || printf '%s\n' "$EXTRA" >> /etc/caixa-preta.conf
+echo "-- /etc/caixa-preta.conf:"
+sed 's/^/   /' /etc/caixa-preta.conf
 
 echo "== 3. servico =="
 cp "$HERE/caixa-preta.service" /etc/systemd/system/caixa-preta.service

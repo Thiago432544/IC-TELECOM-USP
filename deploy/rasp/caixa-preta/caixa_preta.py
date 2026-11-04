@@ -60,6 +60,19 @@ radio_voltou (RSRP 10 dB abaixo da linha de base) e falhas de leitura. Enquanto
 o watchdog reinicia a Elsys (router.lock), a leitura para, para nao disputar a
 sessao. --quedas responde a pergunta de 17/10: o sinal caiu antes da queda
 (obstaculo) ou estava bom e o trafego parou mesmo assim (a Elsys)?
+
+Teltonika (04/11/2026). Com `cpe = teltonika` (ou o `modelo` do router.conf,
+ou gateway 192.168.11.1), a leitura do radio vai pela API do RutOS
+(/api/modems/status, token reaproveitado por ~4,5 min): RSRP, RSRQ, SINR,
+banda e o estado do modem. A troca "Conectado" <-> outro estado vira os
+eventos modem_desconectou / modem_conectou. Tambem desligada por padrao: a
+Teltonika ainda nao passou por um teste longo de leitura (bancada da 106).
+
+Alvo do LTE (04/11/2026). Com `alvo_lte` (por padrao o mesmo do router.conf
+do watchdog, 192.168.10.2), cada ciclo pinga o outro lado do radio. Separa
+"o LTE nao passa trafego" (alvo_perdido) de "o servidor/PC do SPA caiu" (o
+alvo responde e a conexao nao abre), e pega a queda em que o modem diz
+"Conectado" sem passar nada. --quedas olha wan_perdida e alvo_perdido.
 """
 import argparse
 import base64
@@ -81,7 +94,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSAO = "2026-10-19c"
+VERSAO = "2026-11-04"
 
 PADRAO = {
     "camera": "",
@@ -109,6 +122,13 @@ PADRAO = {
     "radio_s": 0,                      # 0 desliga a leitura do sinal da Elsys
     "radio_url": "",                   # vazio = http://<gateway>/status.html
     "router_conf": "",                 # vazio = <base>/router.conf (o do watchdog)
+    # Qual CPE: "elsys" ou "teltonika"; vazio = o 'modelo' do router.conf, ou
+    # teltonika se o gateway for 192.168.11.1. Na Teltonika a leitura do radio
+    # vai pela API do RutOS (/api/modems/status), nao por pagina.
+    "cpe": "",
+    # Ping a cada ciclo no outro lado do LTE (192.168.10.2, na COW, achado em
+    # 04/11). Vazio = o 'alvo_lte' do router.conf do watchdog; "-" desliga.
+    "alvo_lte": "",
 }
 CONF = "/etc/caixa-preta.conf"
 
@@ -712,6 +732,105 @@ class LeitorElsys:
         return r
 
 
+def _campo_num(v):
+    if isinstance(v, (int, float)) and not isinstance(v, bool):
+        return float(v)
+    return _numero(str(v)) if v not in (None, "") else None
+
+
+def parse_modem_teltonika(d):
+    """O item de /api/modems/status no mesmo formato da leitura da Elsys.
+    So campos de radio: IMEI, ICCID e IMSI ficam de fora do registro."""
+    estado = str(d.get("state") or "")
+    if estado.lower() == "connected":
+        con = "Conectado"
+    else:
+        con = f"Desconectado ({estado})" if estado else None
+    return {"rsrp": _campo_num(d.get("rsrp")),
+            "rsrq": _campo_num(d.get("rsrq")),
+            "sinr": _campo_num(d.get("sinr")),
+            "rssi": _campo_num(d.get("rssi", d.get("signal"))),
+            "pct": None,
+            "con": con,
+            "rede": d.get("conntype") or None,
+            "banda": d.get("band") or None,
+            "op": d.get("operator") or None}
+
+
+class LeitorTeltonika:
+    """Le o estado do modem pela API do RutOS (a mesma do watchdog): POST
+    /api/login devolve um token de ~5 min; GET /api/modems/status com ele.
+    O token e' reaproveitado ate' perto de vencer, para nao abrir uma sessao
+    por leitura; um 401/403 refaz o login uma vez. Usuario e senha saem do
+    router.conf do watchdog, nunca daqui."""
+
+    TOKEN_S = 270                 # o RutOS 07.10 da 105 deu token de 299 s
+
+    def __init__(self, raiz, router_conf, timeout=4.0, mono=time.monotonic):
+        self.raiz = raiz.rstrip("/")
+        self.router_conf = router_conf
+        self.timeout = timeout
+        self.mono = mono
+        self.token = None
+        self.token_t = -1e9
+        self.logins = 0
+
+    def _req(self, metodo, caminho, corpo=None, token=None):
+        dados = json.dumps(corpo).encode() if corpo is not None else None
+        req = urllib.request.Request(self.raiz + caminho, data=dados, method=metodo)
+        req.add_header("Content-Type", "application/json")
+        if token:
+            req.add_header("Authorization", "Bearer " + token)
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout) as r:
+                st, txt = r.status, r.read(300000)
+        except urllib.error.HTTPError as e:
+            st, txt = e.code, e.read(300000)
+        try:
+            return st, json.loads(txt.decode("utf-8", "replace") or "{}")
+        except ValueError:
+            return st, {}
+
+    def _login(self):
+        c = le_router_conf(self.router_conf)
+        if not c.get("senha"):
+            raise LoginRecusado(f"a Teltonika pede login e {self.router_conf} nao tem 'senha'")
+        st, r = self._req("POST", "/api/login",
+                          {"username": c.get("usuario") or "admin", "password": c["senha"]})
+        d = r.get("data")
+        token = d.get("token") if isinstance(d, dict) else None
+        if not token:
+            raise LoginRecusado(f"login recusado pela Teltonika (HTTP {st})")
+        self.token, self.token_t = token, self.mono()
+        self.logins += 1
+
+    def le(self):
+        if self.token is None or self.mono() - self.token_t > self.TOKEN_S:
+            self._login()
+        st, r = self._req("GET", "/api/modems/status", token=self.token)
+        if st in (401, 403):
+            self._login()
+            st, r = self._req("GET", "/api/modems/status", token=self.token)
+        if st != 200:
+            raise RuntimeError(f"/api/modems/status: HTTP {st}")
+        d = r.get("data")
+        d = d[0] if isinstance(d, list) and d else d
+        if not isinstance(d, dict):
+            raise RuntimeError("/api/modems/status sem modem na resposta")
+        return parse_modem_teltonika(d)
+
+
+def cria_leitor(cfg):
+    """O leitor do radio do CPE desta camera (Elsys ou Teltonika)."""
+    conf = cfg.get("router_conf") or os.path.join(cfg["base"], "router.conf")
+    if cfg.get("cpe") == "teltonika":
+        return LeitorTeltonika(cfg.get("radio_url") or f"http://{cfg['gateway']}", conf)
+    return LeitorElsys(cfg.get("radio_url") or f"http://{cfg['gateway']}/status.html", conf)
+
+
+NOME_CPE = {"teltonika": "Teltonika", "elsys": "Elsys"}
+
+
 def _arquivo_fresco(caminho, validade_s):
     try:
         return time.time() - os.path.getmtime(caminho) < validade_s
@@ -761,9 +880,7 @@ class Agente:
         self.leitor = None
         self.reg_radio = None
         if self.radio_s > 0:
-            url = cfg.get("radio_url") or f"http://{cfg['gateway']}/status.html"
-            conf = cfg.get("router_conf") or os.path.join(cfg["base"], "router.conf")
-            self.leitor = LeitorElsys(url, conf)
+            self.leitor = cria_leitor(cfg)
             self.reg_radio = Registro(cfg["saida"], cfg["rotacao_mb"], cfg["manter_arquivos"],
                                       nome="radio.jsonl", prefixo="radio-")
         self.radio_ok = None
@@ -771,6 +888,7 @@ class Agente:
         self.radio_login_recusado = False
         self.radio_base = []
         self.radio_baixo = None          # linha de base no momento do radio_caiu
+        self.radio_conectado = None      # o proprio CPE diz que esta' no LTE?
 
     # -- registro
     def _base(self, tipo):
@@ -789,7 +907,8 @@ class Agente:
     def inicio(self):
         cfg = self.cfg
         self.evento("inicio", versao=VERSAO, pid=os.getpid(),
-                    cfg={k: cfg[k] for k in ("gateway", "wan", "servidor", "porta", "intervalo")})
+                    cfg={k: cfg.get(k) for k in ("gateway", "wan", "servidor", "porta",
+                                                 "intervalo", "cpe", "alvo_lte", "radio_s")})
         ultimo_boot = self.estado.get("boot")
         if ultimo_boot and ultimo_boot != self.boot:
             self.evento("boot_novo", boot_anterior=ultimo_boot[:8],
@@ -810,6 +929,10 @@ class Agente:
         a["gw_ms"] = ping_ms(cfg["gateway"])
         a["gw_arp"] = parse_arp(ler(os.path.join(cfg["proc"], "net/arp"), ""), cfg["gateway"])
         a["wan_ms"] = ping_ms(cfg["wan"]) if cfg["wan"] else None
+        if cfg.get("alvo_lte"):
+            # O outro lado do radio (192.168.10.2, na COW): responde so' se o
+            # LTE desta camera passa trafego de verdade, com ou sem o SPA no ar.
+            a["alvo_ms"] = ping_ms(cfg["alvo_lte"])
         a["eth"] = interface(cfg["proc"], cfg["sys"], cfg["iface"])
         a["conn"] = conexoes_servidor(cfg["proc"], cfg["servidor"], int(cfg["porta"]))
         a["cliente"] = processos_cliente(cfg["proc"], cfg["padrao_cliente"])
@@ -899,6 +1022,13 @@ class Agente:
         self.radio_falhas = 0 if ok else self.radio_falhas + 1
         if not ok:
             return
+        conectado = (r.get("con") or "").lower().startswith("conectado")
+        if self.radio_conectado is not None and conectado != self.radio_conectado:
+            if conectado:
+                self.evento("modem_conectou", con=r.get("con"), rsrp=r.get("rsrp"))
+            else:
+                self.evento("modem_desconectou", con=r.get("con"), rsrp=r.get("rsrp"))
+        self.radio_conectado = conectado
         rsrp = r.get("rsrp")
         base = sorted(self.radio_base)[len(self.radio_base) // 2] if self.radio_base else None
         if self.radio_baixo is None:
@@ -936,6 +1066,9 @@ class Agente:
             if self.cfg["wan"]:
                 muda("wan", a["wan_ms"] is not None, ant["wan_ms"] is not None,
                      "wan_voltou", "wan_perdida")
+            if "alvo_ms" in a and "alvo_ms" in ant:
+                muda("alvo", a["alvo_ms"] is not None, ant["alvo_ms"] is not None,
+                     "alvo_voltou", "alvo_perdido", alvo=self.cfg.get("alvo_lte"))
             if a["eth"].get("carrier") != ant["eth"].get("carrier"):
                 self.evento("cabo", de=ant["eth"].get("carrier"), para=a["eth"].get("carrier"))
             if "cpe80" in a and "cpe80" in ant and a["cpe80"][0] != ant["cpe80"][0]:
@@ -963,7 +1096,8 @@ class Agente:
         else:
             # primeira amostra desta execucao: o ponto de partida da linha do tempo
             self.evento("estado_inicial", gw_ms=a["gw_ms"], gw_arp=a["gw_arp"],
-                        wan_ms=a["wan_ms"], cabo=a["eth"].get("carrier"),
+                        wan_ms=a["wan_ms"], alvo_ms=a.get("alvo_ms"),
+                        alvo=self.cfg.get("alvo_lte") or None, cabo=a["eth"].get("carrier"),
                         conn=a["conn"], cliente=a["cliente"],
                         throttled=a["sis"].get("throttled"))
         if "servidor" in a:
@@ -1140,8 +1274,29 @@ def _frase_router(linha):
     if baixo.startswith("erro ao reiniciar"):
         motivo = linha.split("Message:", 1)[-1].strip()
         return f"Watchdog: FALHOU ao reiniciar a Elsys ({motivo[:90]})"
+    if baixo.startswith("pulando:") and " responde" in baixo:
+        alvo = linha.split(":", 1)[1].split()[0]
+        return (f"Watchdog: nao reiniciou - o outro lado do LTE ({alvo}) responde; o radio "
+                f"esta bom, o problema e' depois dele (servidor ou PC do SPA)")
+    if baixo.startswith("pulando: modem desconectado"):
+        m = re.search(r"ha (\d+) min", baixo)
+        return (f"Watchdog: nao reiniciou - o modem esta fora ha {m.group(1) if m else '?'} min;"
+                f" ate' 20 min a vez e' da propria Elsys se recuperar")
+    if baixo.startswith("pulando: ja existe"):
+        return "Watchdog: nao reiniciou - ja havia um reinicio em andamento"
     if baixo.startswith("pulando"):
         return "Watchdog: nao reiniciou - a Elsys foi reiniciada ha menos de 10 min"
+    if baixo.startswith("modem desconectado ha"):
+        m = re.search(r"ha (\d+) min", baixo)
+        return (f"Watchdog: o modem nao voltou sozinho em {m.group(1) if m else '?'} min "
+                f"- a primeira camada falhou")
+    if "login pela api ok" in baixo:
+        return "Watchdog: entrou na Elsys (API)"
+    if baixo.startswith("teltonika: reboot pedido"):
+        return "Watchdog: pediu o reinicio da Elsys pela API"
+    if baixo.startswith("teltonika: modem estado="):
+        m = re.search(r"estado='([^']*)'", linha)
+        return f"Watchdog: o modem da Elsys diz '{m.group(1) if m else '?'}'"
     if "pagina da falha salva" in baixo:
         return "Watchdog: guardou a tela da falha (router_erro.png)"
     if "reboot clicado" in baixo:
@@ -1201,8 +1356,14 @@ def _fmt_dur(s):
     return f"{s // 3600} h {s % 3600 // 60:02d} min"
 
 
-def frase_evento(r):
-    """Uma frase em portugues simples para o evento, ou None para esconder."""
+def frase_evento(r, cpe="Elsys"):
+    """Uma frase em portugues simples para o evento, ou None para esconder.
+    `cpe` troca o nome do equipamento nas frases (Elsys ou Teltonika)."""
+    f = _frase_evento(r)
+    return f.replace("Elsys", cpe) if f and cpe != "Elsys" else f
+
+
+def _frase_evento(r):
     ev, d = r.get("ev"), r
     if ev in ("relogio", "arp_gateway", "historico"):
         return None
@@ -1248,9 +1409,13 @@ def frase_evento(r):
         gw = "responde" if d.get("gw_ms") is not None else "NAO responde"
         conn = [c.get("estado") for c in d.get("conn", [])]
         cli = "rodando" if d.get("cliente") else "PARADO"
+        alvo = ""
+        if d.get("alvo"):
+            alvo = (f"; outro lado do LTE ({d['alvo']}) "
+                    f"{'responde' if d.get('alvo_ms') is not None else 'NAO responde'}")
         return (f"Estado ao iniciar: Elsys {gw} na rede local; camera "
                 f"{'conectada' if 'ESTABLISHED' in conn else 'NAO conectada'} ao servidor; "
-                f"cliente {cli}")
+                f"cliente {cli}{alvo}")
     if ev == "cliente_novo":
         return "O programa da camera (cliente) iniciou"
     if ev == "cliente_sumiu":
@@ -1266,7 +1431,17 @@ def frase_evento(r):
         return ("A Pi saiu da subtensao/superaquecimento" if v == "0x0"
                 else f"A Pi esta com SUBTENSAO ou SUPERAQUECIMENTO ({v})")
     if ev == "radio_inicial":
-        return f"Primeira leitura do sinal: RSRP {d.get('rsrp')} dBm"
+        con = f" ({d.get('con')})" if d.get("con") else ""
+        return f"Primeira leitura do sinal: RSRP {d.get('rsrp')} dBm{con}"
+    if ev == "modem_desconectou":
+        return f"O modem da Elsys diz que SAIU do LTE ({d.get('con')})"
+    if ev == "modem_conectou":
+        return f"O modem da Elsys diz que voltou ao LTE (RSRP {d.get('rsrp')} dBm)"
+    if ev == "alvo_perdido":
+        return (f"O OUTRO LADO DO LTE ({d.get('alvo')}) PAROU de responder: o radio "
+                f"nao esta passando trafego")
+    if ev == "alvo_voltou":
+        return f"O outro lado do LTE ({d.get('alvo')}) voltou a responder"
     if ev == "radio_caiu":
         return f"O SINAL CAIU: RSRP {d.get('rsrp')} dBm (normal: {d.get('base')})"
     if ev == "radio_voltou":
@@ -1308,8 +1483,9 @@ def relatorio_simples(pasta, horas=None, intervalo=30, saida=None, offset=None):
     print(f"# {qual}  |  o que aconteceu", file=saida)
     ultima = None
     anterior = None
-    lte_fora = None
-    quedas, reinicios, falhas, boots = [], 0, 0, 0
+    lte_fora = alvo_fora = None
+    quedas, quedas_alvo, reinicios, falhas, boots, modem_saiu = [], [], 0, 0, 0, 0
+    cpe, alvo = "Elsys", None
     for r in regs:
         t = r.get("t", 0)
         if r.get("tipo") == "amostra":
@@ -1321,16 +1497,29 @@ def relatorio_simples(pasta, horas=None, intervalo=30, saida=None, offset=None):
             ultima = r
             continue
         ev = r.get("ev")
+        if ev == "inicio":
+            c = r.get("cfg") or {}
+            cpe = NOME_CPE.get(c.get("cpe") or "elsys", "Elsys")
+            alvo = c.get("alvo_lte") or alvo
         if ev == "wan_perdida":
             lte_fora = t
+        elif ev == "alvo_perdido":
+            alvo_fora = t
+            alvo = r.get("alvo") or alvo
+        elif ev == "modem_desconectou":
+            modem_saiu += 1
         elif ev == "boot_novo":
             boots += 1
-            lte_fora = None
-        frase = frase_evento(r)
+            lte_fora = alvo_fora = None
+        frase = frase_evento(r, cpe)
         if ev == "wan_voltou" and lte_fora is not None:
             quedas.append(t - lte_fora)
             frase += f" (ficou fora {_fmt_dur(t - lte_fora)})"
             lte_fora = None
+        if ev == "alvo_voltou" and alvo_fora is not None:
+            quedas_alvo.append(t - alvo_fora)
+            frase += f" (ficou fora {_fmt_dur(t - alvo_fora)})"
+            alvo_fora = None
         if frase and frase.startswith("Watchdog: vai reiniciar"):
             reinicios += 1
         if frase and frase.startswith("Watchdog: FALHOU"):
@@ -1350,7 +1539,16 @@ def relatorio_simples(pasta, horas=None, intervalo=30, saida=None, offset=None):
     if lte_fora is not None:
         print(f"#  ATENCAO: o LTE caiu em {hora(lte_fora)} e nao voltou ate o fim do registro",
               file=saida)
-    print(f"#  reinicios da Elsys pelo watchdog: {reinicios} tentados, {falhas} falharam",
+    if quedas_alvo:
+        print(f"#  o outro lado do LTE ({alvo}) parou de responder e voltou "
+              f"{len(quedas_alvo)} vez(es) (mais longa {_fmt_dur(max(quedas_alvo))})",
+              file=saida)
+    if alvo_fora is not None:
+        print(f"#  ATENCAO: o outro lado do LTE ({alvo}) parou de responder em "
+              f"{hora(alvo_fora)} e nao voltou ate o fim do registro", file=saida)
+    if modem_saiu:
+        print(f"#  o modem da {cpe} disse que saiu do LTE {modem_saiu} vez(es)", file=saida)
+    print(f"#  reinicios da {cpe} pelo watchdog: {reinicios} tentados, {falhas} falharam",
           file=saida)
     if boots:
         print(f"#  a Pi ligou {boots} vez(es) no periodo (reinicio ou falta de energia)",
@@ -1368,7 +1566,7 @@ def _sumiu(r):
                                 not (r.get("con") or "").lower().startswith("conectado"))
 
 
-def veredito_queda(janela, t0):
+def veredito_queda(janela, t0, cpe="Elsys"):
     """O sinal caiu antes de sumir (obstaculo) ou estava bom ate o fim (Elsys)?
 
     `janela` sao as leituras de radio em volta do evento em `t0`. A queda conta
@@ -1387,7 +1585,7 @@ def veredito_queda(janela, t0):
         return (f"o sinal caiu {base - pior:.0f} dB antes da queda (de {base:.0f} para "
                 f"{pior:.0f} dBm): obstaculo provavel")
     return (f"o sinal estava estavel antes da queda ({pior:.0f} a {max(validos):.0f} dBm): "
-            f"o radio estava bom - aponta para a Elsys")
+            f"o radio estava bom - aponta para a {cpe}")
 
 
 def relatorio_quedas(pasta, horas=None, offset=None, saida=None, antes=90, depois=30):
@@ -1395,8 +1593,20 @@ def relatorio_quedas(pasta, horas=None, offset=None, saida=None, antes=90, depoi
     s depois, e o veredito. O wan_perdida sai do ciclo de 30 s; a janela cobre
     essa folga, e a hora exata da queda vem da propria Elsys."""
     saida = saida or sys.stdout
-    evs = [r for r in le_registros(pasta)
-           if r.get("tipo") == "evento" and r.get("ev") == "wan_perdida"]
+    todos = [r for r in le_registros(pasta) if r.get("tipo") == "evento"]
+    cpe = "Elsys"
+    for r in todos:
+        if r.get("ev") == "inicio":
+            cpe = NOME_CPE.get((r.get("cfg") or {}).get("cpe") or "elsys", "Elsys")
+    # wan_perdida: o CPE perdeu o proprio endereco no LTE. alvo_perdido: o
+    # outro lado parou de responder - pega tambem a queda em que o modem segue
+    # "Conectado" sem passar trafego. As duas juntas (2 min) contam uma vez.
+    evs = []
+    for r in sorted((r for r in todos if r.get("ev") in ("wan_perdida", "alvo_perdido")),
+                    key=lambda r: r.get("t", 0)):
+        if evs and r["t"] - evs[-1]["t"] <= 120:
+            continue
+        evs.append(r)
     radio = sorted((r for r in le_registros(pasta, "radio-", "radio.jsonl") if "t" in r),
                    key=lambda r: r["t"])
     if horas:
@@ -1407,21 +1617,22 @@ def relatorio_quedas(pasta, horas=None, offset=None, saida=None, antes=90, depoi
         return time.strftime("%d/%m %H:%M:%S", time.localtime(t))
 
     if not evs:
-        print("# nenhuma queda (wan_perdida) no periodo", file=saida)
+        print("# nenhuma queda (wan_perdida ou alvo_perdido) no periodo", file=saida)
     if not radio:
         print("# sem leituras de radio (radio.jsonl): radio_s = 0, ou a leitura nunca "
               "funcionou - teste com --radio", file=saida)
     for ev in evs:
         t0 = ev["t"]
         real = f" / {hora(t0 + offset)} real" if offset is not None else ""
-        print(f"\n== queda {hora(t0)} (Pi){real} ==", file=saida)
+        print(f"\n== queda {hora(t0)} (Pi){real} - {ev['ev']} ==", file=saida)
         janela = [r for r in radio if t0 - antes <= r["t"] <= t0 + depois]
         for r in janela:
             fim = r.get("erro") or r.get("con") or ""
+            sinr = f"  sinr {r['sinr']}" if r.get("sinr") is not None else ""
             print(f"  {time.strftime('%H:%M:%S', time.localtime(r['t']))} "
-                  f"{r['t'] - t0:+5.0f}s  rsrp {r.get('rsrp')}  rsrq {r.get('rsrq')}  {fim}",
+                  f"{r['t'] - t0:+5.0f}s  rsrp {r.get('rsrp')}  rsrq {r.get('rsrq')}{sinr}  {fim}",
                   file=saida)
-        print(f"  -> {veredito_queda(janela, t0)}", file=saida)
+        print(f"  -> {veredito_queda(janela, t0, cpe)}", file=saida)
 
 
 # ----------------------------------------------------------------- entrada ---
@@ -1434,6 +1645,16 @@ def monta_cfg(args):
     for k in ("porta", "intervalo", "rotacao_mb", "manter_arquivos"):
         cfg[k] = int(cfg[k])
     cfg["radio_s"] = float(cfg.get("radio_s") or 0)
+    rc = le_router_conf(cfg.get("router_conf") or os.path.join(cfg["base"], "router.conf"))
+    if not cfg.get("cpe"):
+        modelo = (rc.get("modelo") or "").lower()
+        cfg["cpe"] = ("teltonika" if modelo == "teltonika" or cfg["gateway"] == "192.168.11.1"
+                      else "elsys")
+    cfg["cpe"] = cfg["cpe"].lower()
+    if not cfg.get("alvo_lte"):
+        cfg["alvo_lte"] = rc.get("alvo_lte", "")
+    if cfg["alvo_lte"] in ("-", "0", "nao", "nenhum"):
+        cfg["alvo_lte"] = ""
     if not cfg["wan"] and cfg["camera"]:
         cfg["wan"] = f"192.168.10.{cfg['camera']}"
     return cfg
@@ -1452,7 +1673,7 @@ def main(argv=None):
                     help="relatorio em frases, para quem nao conhece os eventos")
     ap.add_argument("--dir", default=None, help="pasta dos registros (relatorio)")
     ap.add_argument("--radio", action="store_true",
-                    help="le o sinal da Elsys uma vez e imprime (testa o login)")
+                    help="le o sinal do CPE (Elsys ou Teltonika) uma vez e imprime (testa o login)")
     ap.add_argument("--quedas", action="store_true",
                     help="RSRP em volta de cada queda (wan_perdida), com veredito")
     ap.add_argument("--offset", type=parse_offset, default=None,
@@ -1474,10 +1695,8 @@ def main(argv=None):
         relatorio_quedas(args.dir or cfg["saida"], args.horas, offset=args.offset)
         return 0
     if args.radio:
-        url = cfg.get("radio_url") or f"http://{cfg['gateway']}/status.html"
-        conf = cfg.get("router_conf") or os.path.join(cfg["base"], "router.conf")
         try:
-            print(json.dumps(LeitorElsys(url, conf).le(), ensure_ascii=False))
+            print(json.dumps(cria_leitor(cfg).le(), ensure_ascii=False))
             return 0
         except Exception as e:                               # noqa: BLE001
             print(f"falhou: {type(e).__name__}: {e}", file=sys.stderr)
