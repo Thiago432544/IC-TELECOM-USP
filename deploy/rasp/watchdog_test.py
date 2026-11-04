@@ -414,16 +414,25 @@ def _fluxo_teltonika_api(cfg, clicar=True):
     _api_modem(raiz, token)
     escolhido = cfg.get("api_reboot")
     if not clicar:
+        # Controle: como o firmware responde a um endpoint que certamente nao
+        # existe. Em 03/11 o reboot respondeu GET com HTTP 501, que tanto pode
+        # ser "so aceita POST" quanto "nao existe" - so a comparacao separa.
+        st0, r0 = _api("GET", raiz + "/api/endpoint-que-nao-existe", token=token)
+        _log(f"teltonika: controle (endpoint inexistente) -> HTTP {st0} "
+             f"{sorted(c for c in _codigos(r0) if c is not None)}")
         candidatos = (escolhido,) if escolhido else TELT_API_REBOOT_CANDIDATOS
         for caminho in candidatos:
             st, r = _api("GET", raiz + caminho, token=token)
-            if _endpoint_existe(st, r):
-                _log(f"teltonika: endpoint de reboot {caminho} existe (GET -> HTTP {st}), "
-                     "--seco, nao reiniciado")
+            cods = sorted(c for c in _codigos(r) if c is not None)
+            igual_ao_controle = (st, cods) == (st0, sorted(c for c in _codigos(r0) if c is not None))
+            if _endpoint_existe(st, r) and not igual_ao_controle:
+                _log(f"teltonika: endpoint de reboot {caminho} existe (GET -> HTTP {st} {cods}, "
+                     f"diferente do controle), --seco, nao reiniciado")
                 if caminho != TELT_API_REBOOT and not escolhido:
                     _log(f"teltonika: ponha 'api_reboot = {caminho}' no router.conf")
                 return
-            _log(f"teltonika: {caminho} nao existe neste firmware (HTTP {st})")
+            _log(f"teltonika: {caminho} nao existe neste firmware (HTTP {st} {cods}"
+                 f"{', igual ao controle' if igual_ao_controle else ''})")
         raise RuntimeError("nenhum endpoint de reboot conhecido existe neste firmware")
     caminho = escolhido or TELT_API_REBOOT
     try:

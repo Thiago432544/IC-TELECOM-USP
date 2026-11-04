@@ -496,3 +496,22 @@ def test_api_real_sobre_http_le_erro_como_resposta(tmp_path, monkeypatch):
         assert "reboot pedido pela API" in Path(mod.LOG).read_text()
     finally:
         srv.shutdown()
+
+
+def test_teltonika_seco_compara_com_um_endpoint_inexistente(tmp_path, monkeypatch):
+    """03/11: GET no reboot deu HTTP 501. Se um endpoint inexistente tambem
+    der 501 com o mesmo codigo, o --seco nao pode dizer que o reboot existe."""
+    mod = _load(_driver_ok, tmp_path, monkeypatch)
+
+    class Igual(_ApiFalsa):
+        def __call__(self, metodo, url, corpo=None, token=None, timeout=10):
+            caminho = url.split("192.168.11.1", 1)[-1]
+            if caminho not in ("/api/login", "/api/modems/status"):
+                self.chamadas.append((metodo, caminho, corpo, token))
+                return 501, {"success": False, "errors": [{"code": 999}]}
+            return super().__call__(metodo, url, corpo, token, timeout)
+
+    monkeypatch.setattr(mod, "_api", Igual())
+    _conf_telt(mod)
+    assert mod.restart_router(seco=True) == -1
+    assert "igual ao controle" in Path(mod.LOG).read_text()
