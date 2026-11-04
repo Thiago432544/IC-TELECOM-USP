@@ -291,7 +291,7 @@ reinstalação.
 ```bash
 # 1. baixar e instalar
 mkdir -p ~/cp-2026-11-04 && cd ~/cp-2026-11-04
-R=https://raw.githubusercontent.com/Thiago432544/ic-telecom-usp/main/deploy/rasp/caixa-preta
+R=https://raw.githubusercontent.com/Thiago432544/IC-TELECOM-USP/main/deploy/rasp/caixa-preta
 for f in caixa_preta.py instalar_caixa_preta.sh caixa-preta.service journald-persistente.conf; do
   curl -fsSLO "$R/$f"; done
 sudo bash instalar_caixa_preta.sh 106        # deve mostrar "gateway 192.168.11.1"
